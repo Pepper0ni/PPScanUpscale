@@ -5,9 +5,13 @@ import os
 import argparse
 from imutils import perspective
 
-def angleToColour(rad):
+ANGLE_TOLERANCE = 0.02 #in radians
+DEFAULT_BORDER_TOLERANCE = 0.0327272727273 #multiplied by y coord
+
+def angleToColour():#rad):
+    return (0,255,0)
     degrees = abs(rad)*180/np.pi
-    angle = (degrees+45)%90-45
+    angle = (degrees+45) % 90-45
     if abs(angle) < (2.55/8):
         green = 255 - (abs(angle)*800)
     else:
@@ -90,11 +94,21 @@ def trimLine(pt1,pt2,maxX,maxY):
         pt2 = trimLongLine(pt2, pt1, maxX, maxY)
     return pt1, pt2
 
-def processLines(img, lines, axis, debug):
+def processLines(img, lines, axis, edge, debug):
     drawImg = np.copy(img)
-    maxLine = None
-    minLine = None
+    maxLine = [None, None]
+    minLine = [None, None]
     imgsize = (img.shape[1], img.shape[0])
+    if not edge:
+        maxEdge = round(DEFAULT_BORDER_TOLERANCE * imgsize[1])
+        minEdge = round(DEFAULT_BORDER_TOLERANCE * imgsize[1])
+    elif axis == 1:
+        minEdge = edge[0]
+        maxEdge = edge[1]
+    else:
+        minEdge = edge[2]
+        maxEdge = edge[3]
+
     if lines is not None:
         for i in range(0, len(lines)):
             rho = lines[i][0][0]
@@ -108,25 +122,36 @@ def processLines(img, lines, axis, debug):
             if debug:
                 int1 = [int(pt1[0]), int(pt1[1])]
                 int2 = [int(pt2[0]), int(pt2[1])]
-                cv.line(drawImg, int1, int2, angleToColour(theta), 1, cv.LINE_AA)
-                print(imgsize)
+                cv.line(drawImg, int1, int2, angleToColour(), 1, cv.LINE_AA)
+            pt1, pt2 = trimLine(pt1, pt2, imgsize[0], imgsize[1])
+            if debug:
                 print(pt1)
                 print(pt2)
-            pt1, pt2 = trimLine(pt1, pt2, imgsize[0], imgsize[1])
-            if (pt1[axis] > imgsize[axis] - 30 and pt2[axis] > imgsize[axis] - 30) and (not maxLine or max(maxLine["processed"][0][axis], maxLine["processed"][1][axis]) > max(pt1[axis], pt2[axis]) or \
-                    max(maxLine["processed"][0][axis], maxLine["processed"][1][axis]) == max(pt1[axis], pt2[axis]) and \
-                    maxLine["processed"][0][axis] + maxLine["processed"][1][axis] > pt1[axis] + pt2[axis]):
-                maxLine = {"processed": [pt1, pt2], "line": lines[i]}
-            if (pt1[axis] < 30 and pt2[axis] < 30) and (not minLine or min(minLine["processed"][0][axis], minLine["processed"][1][axis]) < min(pt1[axis], pt2[axis]) or \
-                    min(minLine["processed"][0][axis], minLine["processed"][1][axis]) == min(pt1[axis], pt2[axis]) and \
-                    minLine["processed"][0][axis] + minLine["processed"][1][axis] < pt1[axis] + pt2[axis]):
-                minLine = {"processed": [pt1, pt2], "line": lines[i]}
+                print(axis)
+                print(imgsize[axis] - maxEdge)
+                print(minEdge)
+            if pt1[axis] > imgsize[axis] - maxEdge and pt2[axis] > imgsize[axis] - maxEdge:
+                if not maxLine[0] or maxLine[0][axis] < pt1[axis]:
+                    maxLine = (pt1, maxLine[1])
+                if not maxLine[1] or maxLine[1][axis] < pt2[axis]:
+                    maxLine = (maxLine[0], pt2)
+
+            if pt1[axis] < minEdge and pt2[axis] < minEdge:
+                if not minLine or not minLine[0] or minLine[0][axis] > pt1[axis]:
+                    minLine = (pt1, minLine[1])
+                if not minLine or not minLine[1] or minLine[1][axis] > pt2[axis]:
+                    minLine = (minLine[0], pt2)
+
+    if maxLine[0] == None or maxLine[1] == None:
+        maxLine = None
+    if minLine[0] == None or minLine[1] == None:
+        minLine = None
     return drawImg, maxLine, minLine
 
-def processImage(baseImg, cleanImg, debug=False):
+def processImage(baseImg, cleanImg, border, trim, expand, edge, debug=False):
 
     src = cv.imread(cv.samples.findFile(baseImg))
-    clean = cv.imread(cv.samples.findFile(cleanImg))#, cv.IMREAD_GRAYSCALE)
+    clean = cv.imread(cv.samples.findFile(cleanImg))
 
     if src is None:
         print('Base Image at ' + baseImg + ' Not Found, skipping')
@@ -135,74 +160,124 @@ def processImage(baseImg, cleanImg, debug=False):
         print('Clean Image at ' + cleanImg + ' Not Found, attempting with base image')
         clean = cv.imread(cv.samples.findFile(baseImg))
 
-    dst = cv.Canny(clean, 25, 100, True, 5)
+    dst = cv.Canny(clean, 25, 200, True, 5)
 
     cdst = cv.cvtColor(dst, cv.COLOR_GRAY2BGR)
-    threshold = 440
+    threshold = 0.733333333333*src.shape[1]
+    print(threshold)
     while True:
-        horiLines = cv.HoughLines(dst, 1, np.pi / 2880, threshold, None, 0,0, np.pi*0.47,np.pi*0.53)
-        cdstH, upperLine, lowerLine = processLines(cdst, horiLines, 1, debug)
+        horiLines = cv.HoughLines(dst, 1, np.pi / 2880, round(threshold), None, 0,0, np.pi*(0.5-ANGLE_TOLERANCE),np.pi*(0.5+ANGLE_TOLERANCE))
+        cdstH, upperLine, lowerLine = processLines(cdst, horiLines, 1, edge, debug)
         if upperLine and lowerLine:
             break
         threshold -= 20
         if threshold <= 0:
             break
-    threshold = 550
+    if debug:
+        print("H Threshold:" + str(round(threshold)))
+    threshold = 0.666666666667*src.shape[1]
+    print(threshold)
     while True:
-        vertLines = cv.HoughLines(dst, 1, np.pi / 2880, threshold, None, 0, 0, np.pi * 0.97, np.pi * 1.03)
-        cdstV, leftLine, rightLine = processLines(cdst, vertLines, 0, debug)
-        if leftLine and rightLine:
+        vertLines =   cv.HoughLines(dst, 1, np.pi / 2880, round(threshold), None, 0, 0, np.pi * (1-ANGLE_TOLERANCE), np.pi * (1+ANGLE_TOLERANCE))
+        cdstV, rightLine, leftLine = processLines(cdst, vertLines, 0, edge, debug)
+        if rightLine and leftLine:
             break
         threshold -= 20
         if threshold <= 0:
             break
+    if debug:
+        print("V Threshold:" + str(round(threshold)))
 
-    if lowerLine and leftLine and upperLine and rightLine:
+    if lowerLine and rightLine and upperLine and leftLine:
         if debug:
-            print(abs(lowerLine["line"][0][1])*180/np.pi)
-            print(lowerLine["processed"])
-            cv.line(cdst, [int(lowerLine["processed"][0][0]), int(lowerLine["processed"][0][1])],
-                    [int(lowerLine["processed"][1][0]), int(lowerLine["processed"][1][1])], angleToColour(lowerLine["line"][0][1]), 1, cv.LINE_AA)
-            print(abs(leftLine["line"][0][1]) * 180 / np.pi)
-            print(leftLine["processed"])
-            cv.line(cdst, [int(leftLine["processed"][0][0]), int(leftLine["processed"][0][1])],
-                    [int(leftLine["processed"][1][0]), int(leftLine["processed"][1][1])], angleToColour(leftLine["line"][0][1]), 1,cv.LINE_AA)
-            print(abs(upperLine["line"][0][1]) * 180 / np.pi)
-            print(upperLine["processed"])
-            cv.line(cdst, [int(upperLine["processed"][0][0]), int(upperLine["processed"][0][1])],
-                    [int(upperLine["processed"][1][0]), int(upperLine["processed"][1][1])], angleToColour(upperLine["line"][0][1]), 1,cv.LINE_AA)
-            print(abs(rightLine["line"][0][1]) * 180 / np.pi)
-            print(rightLine["processed"])
-            cv.line(cdst, [int(rightLine["processed"][0][0]), int(rightLine["processed"][0][1])],
-                    [int(rightLine["processed"][1][0]), int(rightLine["processed"][1][1])],
-                    angleToColour(rightLine["line"][0][1]), 1, cv.LINE_AA)
-        upperRight = intersect(upperLine["processed"][0],upperLine["processed"][1], rightLine["processed"][0],rightLine["processed"][1])
-        upperLeft = intersect(upperLine["processed"][0],upperLine["processed"][1], leftLine["processed"][0],leftLine["processed"][1])
-        lowerRight = intersect(lowerLine["processed"][0],lowerLine["processed"][1], rightLine["processed"][0],rightLine["processed"][1])
-        lowerLeft = intersect(lowerLine["processed"][0],lowerLine["processed"][1], leftLine["processed"][0],leftLine["processed"][1])
+            print(lowerLine)
+            cv.line(cdst, [int(lowerLine[0][0]), int(lowerLine[0][1])],
+                    [int(lowerLine[1][0]), int(lowerLine[1][1])], angleToColour(), 1,cv.LINE_AA)
+            print(rightLine)
+            cv.line(cdst, [int(rightLine[0][0]), int(rightLine[0][1])],[int(rightLine[1][0]), int(rightLine[1][1])], angleToColour(), 1, cv.LINE_AA)
+            print(upperLine)
+            cv.line(cdst, [int(upperLine[0][0]), int(upperLine[0][1])],
+                    [int(upperLine[1][0]), int(upperLine[1][1])], angleToColour(), 1,
+                    cv.LINE_AA)
+            print(leftLine)
+            cv.line(cdst, [int(leftLine[0][0]), int(leftLine[0][1])],
+                    [int(leftLine[1][0]), int(leftLine[1][1])],angleToColour(), 1, cv.LINE_AA)
 
-        corners = np.array([upperRight, upperLeft, lowerRight, lowerLeft])
-        warped = perspective.four_point_transform(src, corners)
+        upperLeft = intersect(upperLine[0], upperLine[1], leftLine[0],
+                               leftLine[1])
+        upperRight = intersect(upperLine[0], upperLine[1], rightLine[0],
+                              rightLine[1])
+        lowerLeft = intersect(lowerLine[0], lowerLine[1], leftLine[0],
+                               leftLine[1])
+        lowerRight = intersect(lowerLine[0], lowerLine[1], rightLine[0],
+                              rightLine[1])
 
-        if debug:
-            return warped, dst, cdst, cdstV, cdstH
+        upperLeft = (max(upperLeft[0] - border[2],0), min(upperLeft[1] + border[0], src.shape[0]-1))
+        upperRight = (min(upperRight[0] + border[3], src.shape[1]-1), min(upperRight[1] + border[0], src.shape[0]-1))
+        lowerLeft = (max(lowerLeft[0] - border[2], 0), max(lowerLeft[1] - border[1],0))
+        lowerRight = (min(lowerRight[0] + border[3], src.shape[1]-1), max(lowerRight[1] - border[1],0))
+
+        corners = np.array([upperLeft, upperRight, lowerLeft, lowerRight])
+        if trim:
+            warped = perspective.four_point_transform(src, corners)
         else:
-            return warped
+            warped = np.copy(src)
+        if expand:
+            warped = cv.cvtColor(warped, cv.COLOR_BGR2BGRA)
+            cardSize = (warped.shape[0]-(border[0]+border[1]), warped.shape[1]-(border[2]+border[3]))
+            expanded = cv.copyMakeBorder(warped, round(cardSize[0]*expand[0]-border[0]), round(cardSize[0]*expand[1]-border[1]), round(cardSize[1]*expand[2]-border[2]), round(cardSize[1]*expand[3]-border[3]), cv.BORDER_CONSTANT, (0,0,0,0))
+        else:
+            expanded = np.copy(warped)
+
+        if debug:
+            return expanded, dst, cdst, cdstV, cdstH
+        else:
+            return expanded
     else:
+        print("H Threshold:" + str(round(threshold)))
         print("ERROR: 4 lines not found in image " + baseImg)
+        if debug:
+            return src, dst, cdst, cdstV, cdstH
+
+def processMultiArg(arg,numNeeded):
+    arg = arg.split(",")
+    argList = []
+    for num in arg:
+        argList.append(float(num))
+    if len(argList) != numNeeded:
+        raise ValueError("EdgeFiltering must have exactly 4 numbers")
+    return argList
 
 
-def main():
-    input = os.path.join(os.getcwd(), "input")
-    clean = os.path.join(os.getcwd(), "temp")
+def processArgs(inputText):
+    input = None
+    clean = None
     deborder = os.path.join(os.getcwd(), "debordered")
+    border = None
+    trim = True
+    expand = None
+    edge = None
 
-    msg = "Adding description"
+    msg = "Improves old pokemon card scans"
     parser = argparse.ArgumentParser(description=msg)
-    parser.add_argument("-i", "--Input", help="Set Input folder")
-    parser.add_argument("-d", "--Deborder", help="Set Deborder folder")
-    parser.add_argument("-c", "--Clean", help="Set Clean Images folder")
-    parser.add_argument("-o", "--Output", help="Set Output folder")
+    parser.add_argument("-i", "--Input", help="Set Input" + inputText)
+    parser.add_argument("-d", "--Deborder", help="Set Deborder" + inputText)
+    parser.add_argument("-c", "--Clean", help="Set Clean Images" + inputText)
+    parser.add_argument("-r", "--border[3]", help="Set the size of the Right border to trim to. default 0")
+    parser.add_argument("-l", "--border[2]", help="Set the size of the Left border to trim to. default 0")
+    parser.add_argument("-t", "--border[0]", help="Set the size of the Top border to trim to. default 0")
+    parser.add_argument("-b", "--BorderSize",
+                        help="Set the size of the 4 borders to trim to \n"
+                             "Accepts 4 numbers seperated by commas, as so: 't,                b,l,r'\n"
+                             "defaults to 0,0,0,0")
+    parser.add_argument("-e", "--Expand",
+                        help="Adds empty space after each border up to a certain ratio of the card. \n"
+                             "Accepts 4 numbers seperated by commas, as so: 't,b,l,r'")
+    parser.add_argument("-ef", "--EdgeFiltering",
+                        help="customises the filtering of lines too far away from the edge. \n"
+                             "Accepts 4 numbers seperated by commas, as so: 't,b,l,r'. \n"
+                             "default is Y res dependent, 27 at 800")
+    parser.add_argument("-tr", "--Trim", help="decides whether or not to trim and deskew the image. default True")
     args = parser.parse_args()
 
     if args.Input:
@@ -211,17 +286,31 @@ def main():
         clean = args.Clean
     if args.Deborder:
         deborder = args.Deborder
-    if args.Output:
-        output = args.Output
+    if args.BorderSize:
+        border = processMultiArg(args.BorderSize, 4)
+    if args.Trim:
+        trim = bool(args.Trim)
+    if args.Expand:
+        expand = processMultiArg(args.Expand,4)
+    if args.EdgeFiltering:
+        edge = processMultiArg(args.EdgeFiltering,4)
+    return input, clean, deborder, border, trim, expand, edge
 
+def main():
+    input, clean, deborder, border, trim, expand, edge = processArgs("folder")
+    if not input:
+        input = os.path.join(os.getcwd(), "input")
+    if not clean:
+        clean = os.path.join(os.getcwd(), "temp")
+    if not border:
+        border = [0,0,0,0]
     with os.scandir(input) as entries:
         for entry in entries:
             if entry.is_file() and entry.name != "Place Images Here":
                 imgname, extension = os.path.splitext(os.path.basename(entry.name))
                 cleanPath = os.path.join(clean, imgname + ".png")
-                #outputPath = os.path.join(output, imgname + ".png")
                 deborderPath = os.path.join(deborder, imgname + ".png")
-                image = processImage(os.path.join(input, entry.name), cleanPath)
+                image = processImage(os.path.join(input, entry.name), cleanPath, border, trim, expand, edge)
                 if image is not None:
                     cv.imwrite(deborderPath, image)
 
