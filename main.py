@@ -164,10 +164,11 @@ def processImage(baseImg, cleanImg, border, trim, expand, edge, debug=False):
 
     cdst = cv.cvtColor(dst, cv.COLOR_GRAY2BGR)
     threshold = 0.733333333333*src.shape[1]
-    print(threshold)
+    if debug:
+        print(threshold)
     while True:
         horiLines = cv.HoughLines(dst, 1, np.pi / 2880, round(threshold), None, 0,0, np.pi*(0.5-ANGLE_TOLERANCE),np.pi*(0.5+ANGLE_TOLERANCE))
-        cdstH, upperLine, lowerLine = processLines(cdst, horiLines, 1, edge, debug)
+        cdstH, lowerLine, upperLine = processLines(cdst, horiLines, 1, edge, debug)
         if upperLine and lowerLine:
             break
         threshold -= 20
@@ -176,7 +177,8 @@ def processImage(baseImg, cleanImg, border, trim, expand, edge, debug=False):
     if debug:
         print("H Threshold:" + str(round(threshold)))
     threshold = 0.666666666667*src.shape[1]
-    print(threshold)
+    if debug:
+        print(threshold)
     while True:
         vertLines =   cv.HoughLines(dst, 1, np.pi / 2880, round(threshold), None, 0, 0, np.pi * (1-ANGLE_TOLERANCE), np.pi * (1+ANGLE_TOLERANCE))
         cdstV, rightLine, leftLine = processLines(cdst, vertLines, 0, edge, debug)
@@ -203,6 +205,27 @@ def processImage(baseImg, cleanImg, border, trim, expand, edge, debug=False):
             cv.line(cdst, [int(leftLine[0][0]), int(leftLine[0][1])],
                     [int(leftLine[1][0]), int(leftLine[1][1])],angleToColour(), 1, cv.LINE_AA)
 
+        borderToLeave = [border[0],border[1],border[2],border[3]]
+        if upperLine[0][1] < border[0] or upperLine[1][1] < border[0]:
+            borderToLeave[0] = math.floor(min(upperLine[0][1], upperLine[1][1]))
+        if lowerLine[0][1] + borderToLeave[1] >= src.shape[0] or lowerLine[1][1] + borderToLeave[1] >= src.shape[0]:
+            borderToLeave[1] = math.floor(src.shape[0] - min(lowerLine[0][1], lowerLine[1][1]))
+        if leftLine[0][0] < borderToLeave[2] or leftLine[1][0] < borderToLeave[2]:
+            borderToLeave[2] = math.floor(min(leftLine[0][0], leftLine[1][0]))
+        if rightLine[0][0] + borderToLeave[3] >= src.shape[1] or rightLine[1][0] + borderToLeave[3] >= src.shape[1]:
+            borderToLeave[3] = math.floor(src.shape[1] - min(rightLine[0][0], rightLine[1][0]))
+        upperLine[0][1] = max(0, upperLine[0][1] - borderToLeave[0])
+        upperLine[1][1] = max(0, upperLine[1][1] - borderToLeave[0])
+        lowerLine[0][1] = min(src.shape[0]-1, lowerLine[0][1] + borderToLeave[1])
+        lowerLine[1][1] = min(src.shape[0]-1, lowerLine[1][1] + borderToLeave[1])
+        leftLine[0][0] = max(0, leftLine[0][0] - borderToLeave[2])
+        leftLine[1][0] = max(0, leftLine[1][0] - borderToLeave[2])
+        rightLine[0][0] = min(src.shape[1]-1, rightLine[0][0] + borderToLeave[3])
+        rightLine[1][0] = min(src.shape[1]-1, rightLine[1][0] + borderToLeave[3])
+
+        print(upperLine)
+        print(lowerLine)
+
         upperLeft = intersect(upperLine[0], upperLine[1], leftLine[0],
                                leftLine[1])
         upperRight = intersect(upperLine[0], upperLine[1], rightLine[0],
@@ -212,10 +235,11 @@ def processImage(baseImg, cleanImg, border, trim, expand, edge, debug=False):
         lowerRight = intersect(lowerLine[0], lowerLine[1], rightLine[0],
                               rightLine[1])
 
-        upperLeft = (max(upperLeft[0] - border[2],0), min(upperLeft[1] + border[0], src.shape[0]-1))
-        upperRight = (min(upperRight[0] + border[3], src.shape[1]-1), min(upperRight[1] + border[0], src.shape[0]-1))
-        lowerLeft = (max(lowerLeft[0] - border[2], 0), max(lowerLeft[1] - border[1],0))
-        lowerRight = (min(lowerRight[0] + border[3], src.shape[1]-1), max(lowerRight[1] - border[1],0))
+        upperLeft = (max(upperLeft[0], 0), min(upperLeft[1], src.shape[0] - 1))
+        upperRight = (min(upperRight[0], src.shape[1]-1), min(upperRight[1], src.shape[0]-1))
+        lowerLeft = (max(lowerLeft[0], 0), max(lowerLeft[1],0))
+        lowerRight = (min(lowerRight[0], src.shape[1]-1), max(lowerRight[1],0))
+
 
         corners = np.array([upperLeft, upperRight, lowerLeft, lowerRight])
         if trim:
@@ -224,8 +248,8 @@ def processImage(baseImg, cleanImg, border, trim, expand, edge, debug=False):
             warped = np.copy(src)
         if expand:
             warped = cv.cvtColor(warped, cv.COLOR_BGR2BGRA)
-            cardSize = (warped.shape[0]-(border[0]+border[1]), warped.shape[1]-(border[2]+border[3]))
-            expanded = cv.copyMakeBorder(warped, round(cardSize[0]*expand[0]-border[0]), round(cardSize[0]*expand[1]-border[1]), round(cardSize[1]*expand[2]-border[2]), round(cardSize[1]*expand[3]-border[3]), cv.BORDER_CONSTANT, (0,0,0,0))
+            cardSize = (warped.shape[0]-(borderToLeave[0]+borderToLeave[1]), warped.shape[1]-(borderToLeave[2]+borderToLeave[3]))
+            expanded = cv.copyMakeBorder(warped, round(cardSize[0]*expand[0]-borderToLeave[0]), round(cardSize[0]*expand[1]-borderToLeave[1]), round(cardSize[1]*expand[2]-borderToLeave[2]), round(cardSize[1]*expand[3]-borderToLeave[3]), cv.BORDER_CONSTANT, (0,0,0,0))
         else:
             expanded = np.copy(warped)
 
@@ -307,6 +331,7 @@ def main():
     with os.scandir(input) as entries:
         for entry in entries:
             if entry.is_file() and entry.name != "Place Images Here":
+                print("processing " + entry.name)
                 imgname, extension = os.path.splitext(os.path.basename(entry.name))
                 cleanPath = os.path.join(clean, imgname + ".png")
                 deborderPath = os.path.join(deborder, imgname + ".png")
