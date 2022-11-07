@@ -10,15 +10,15 @@ mkdir -p ./deskewed;
 # gmic input "$f" iain_nr_2019 1,0,0,0,0.5,1,0,25,30,30,7,0,0.5,0,0 output ./temp/"$fn"
 #done
 
-for f in ./input/*.jpg; do
- fn=$(basename -s .jpg "$f")
- echo $fn
- gmic input "$f" fx_LCE 100,5,0,0.3,5,0 iain_nr_2019 1,0,0,0,0.5,1,0,25,30,30,7,0,0.5,0,0 output ./temp/"$fn".png
-done
+#for f in ./input/*.jpg; do
+# fn=$(basename -s .jpg "$f")
+# echo $fn
+# gmic input "$f" fx_LCE 100,5,0,0.3,5,0 iain_nr_2019 1,0,0,0,0.5,1,0,25,30,30,7,0,0.5,0,0 output ./temp/"$fn".png
+#done
 
-python3 ./main.py -b 5,5,15,5
+#python3 ./main.py -b 5,5,15,5
 
-python3 /mnt/D/github/Real-ESRGAN/inference_realesrgan.py -n RealESRGAN_x2plus -i ./debordered/ -o ./upscaled/ --fp32 --ext png -s 2
+python3 /mnt/D/github/Real-ESRGAN/inference_realesrgan.py -n RealESRGAN_x2plus -i ./input/ -o ./upscaled/ --fp32 --ext png -s 2 #./debordered/ -o ./upscaled/ --fp32 --ext png -s 2
 
 for f in ./upscaled/*.png; do
  fn=$(basename "$f")
@@ -26,7 +26,7 @@ for f in ./upscaled/*.png; do
  gmic input "$f" fx_LCE 100,5,0,0.3,5,0 iain_nr_2019 1,0,0,0,0.5,1,0,25,30,30,7,0,0.5,0,0 output ./temp/"$fn"
 done
 
-python3 ./main.py -i ./upscaled/ -d ./deskewed/ -b 12,12,34,12 -e 0.0390625,0.0390625,0.0456403269755,0.0456403269755 -ef 15,15,40,15
+python3 ./main.py -i ./upscaled/ -d ./deskewed/ -b 12,12,34,12 -e 0.0390625,0.0390625,0.0456403269755,0.0456403269755 -ef 35,35,35,35
 
 for f in ./deskewed/*.png; do
  fn=$(basename "$f")
@@ -36,4 +36,4 @@ done
 
 python3 maskcorners.py
 
-rm -r ./temp
+#rm -r ./temp
