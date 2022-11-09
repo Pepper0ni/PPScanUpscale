@@ -6,32 +6,12 @@ import argparse
 from decimal import Decimal
 from wand.image import Image as wandImage
 from skimage.transform import PiecewiseAffineTransform, warp
-import skimage.util
+from skimage.util import img_as_ubyte
 from skimage import data
+from skimage import io
 
 ANGLE_TOLERANCE = 0.025  # in radians
 DEFAULT_BORDER_TOLERANCE = 0.0327272727273  # multiplied by y coord
-
-def warpPerspective(image, dstX, dstY, pts, debug):
-    # upperMid = ((pts[0][0]+pts[1][0])/2,(pts[0][1]+pts[1][1])/2)
-    # leftMid = ((pts[0][0] + pts[3][0]) / 2, (pts[0][1] + pts[3][1]) / 2)
-    # lowerMid = ((pts[3][0] + pts[2][0]) / 2, (pts[3][1] + pts[2][1]) / 2)
-    # rightMid = ((pts[2][0] + pts[1][0]) / 2, (pts[2][1] + pts[1][1]) / 2)
-    output = np.array([
-        [0, 0],
-        [dstX - 1, 0],
-        [dstX - 1, dstY - 1],
-        [0, dstY - 1]], dtype="float32")
-        # [0, 0],
-        # [cv.norm((rightMid[0] - leftMid[0]),(rightMid[1] - leftMid[1])), 0],
-        # [cv.norm((rightMid[0] - leftMid[0]),(rightMid[1] - leftMid[1])), cv.norm((upperMid[0] - lowerMid[0]),(upperMid[1] - lowerMid[1]))],
-        # [0, cv.norm((upperMid[0] - lowerMid[0]),(upperMid[1] - lowerMid[1]))]], dtype="float32")
-    if debug:
-        print(pts)
-        print(output)
-    M = cv.getPerspectiveTransform(pts, output)
-    return cv.warpPerspective(image, M, (round(dstX), round(dstY)))
-
 
 def angleToColour():  # rad):
     return (0, 255, 0)
@@ -69,8 +49,15 @@ def intersect(line1, line2):
     if ub < 0 or ub > 1:
         print("Lines out of range 2")
         return None
-    return (line1[0][0] + ua * (line1[1][0] - line1[0][0]), line1[0][1] + ua * (line1[1][1] - line1[0][1]))
+    return [line1[0][0] + ua * (line1[1][0] - line1[0][0]), line1[0][1] + ua * (line1[1][1] - line1[0][1])]
 
+def addBlurredExtendBorder(src,top,bottom,left,right):
+    blurred = cv.blur(src,(5,5))
+    blurred = cv.copyMakeBorder(blurred, top, bottom, left, right, cv.BORDER_REPLICATE)
+    #cv.imshow("bordered", blurred)
+    blurred = cv.GaussianBlur(blurred,(9,9), 0)
+    blurred[top:src.shape[0] + top, left:src.shape[1] + left, :] = src
+    return blurred
 
 def trimNegLine(pt1, pt2):
     disX = pt2[0] - pt1[0]
@@ -196,8 +183,10 @@ def processLines(img, lines, axis, edge, debug):
 
     return drawImg, maxLine, maxMid, minLine, minMid
 
+def calculateOuterAndInnerPoint(pnt, middle, extraSpace):
+    return ([pnt[0]+((pnt[0]-middle[0])*Decimal(extraSpace[0])), pnt[1]+((pnt[1]-middle[1])*Decimal(extraSpace[1]))], pnt)
 
-def processImage(baseImg, cleanImg, border, trim, expand, edge, debug=False, show=False):
+def processImage(baseImg, cleanImg, border, trim, edge, res, debug=False, show=False):
     src = cv.imread(cv.samples.findFile(baseImg))
     clean = cv.imread(cv.samples.findFile(cleanImg))
 
@@ -206,7 +195,7 @@ def processImage(baseImg, cleanImg, border, trim, expand, edge, debug=False, sho
         return
     if clean is None:
         print('Clean Image at ' + cleanImg + ' Not Found, attempting with base image')
-        clean = cv.imread(cv.samples.findFile(baseImg))
+        clean = src #cv.imread(cv.samples.findFile(baseImg))
 
     edges = cv.Canny(clean, 25, 500, True, 5)
 
@@ -239,9 +228,9 @@ def processImage(baseImg, cleanImg, border, trim, expand, edge, debug=False, sho
             break
     if debug:
         print("V Threshold: " + str(round(threshold)))
-
-    offsetX = Decimal(src.shape[1] / 2) #offsets for combined canvas
-    offsetY = Decimal(src.shape[0] / 2)
+    extraSpace = [0.1, 0.1]
+    offsetX = Decimal(round(src.shape[0]*extraSpace[0]))
+    offsetY = Decimal(round(src.shape[1]*extraSpace[1]))
 
     if lowerLine and rightLine and upperLine and leftLine:
         if debug:
@@ -258,32 +247,17 @@ def processImage(baseImg, cleanImg, border, trim, expand, edge, debug=False, sho
             cv.line(cEdges, [int(rightLine[0][0]), int(rightLine[0][1])], [int(rightLine[1][0]), int(rightLine[1][1])],
                     angleToColour(), 1, cv.LINE_AA)
 
-        borderToLeave = [Decimal(border[0]), Decimal(border[1]), Decimal(border[2]), Decimal(border[3])]
-        print((upperLine[0][1], upperLine[1][1], upperMid[1] , borderToLeave[0]))
-        if upperLine[0][1] < borderToLeave[0] or upperLine[1][1] < borderToLeave[0] or upperMid[1] < borderToLeave[0]:
-            borderToLeave[0] = math.floor(min(upperLine[0][1], upperLine[1][1], upperMid[1]))
-        if lowerLine[0][1] + borderToLeave[1] >= src.shape[0] or lowerLine[1][1] + borderToLeave[1] >= src.shape[0] or \
-                lowerMid[1] + borderToLeave[1] >= src.shape[0]:
-            borderToLeave[1] = math.floor(src.shape[0] - max(lowerLine[0][1], lowerLine[1][1], lowerMid[1]))
-        if leftLine[0][0] < borderToLeave[2] or leftLine[1][0] < borderToLeave[2] or leftMid[0] < borderToLeave[2]:
-            borderToLeave[2] = math.floor(min(leftLine[0][0], leftLine[1][0], leftMid[0]))
-        if rightLine[0][0] + borderToLeave[3] >= src.shape[1] or rightLine[1][0] + borderToLeave[3] >= src.shape[1] or \
-                rightMid[0] + borderToLeave[3] >= src.shape[1]:
-            borderToLeave[3] = math.floor(src.shape[1] - max(rightLine[0][0], rightLine[1][0], rightMid[0]))
-        if debug:
-            print("borderToLeave: " + str(borderToLeave))
-
         upperLeft = intersect(upperLine, leftLine)
         upperRight = intersect(upperLine, rightLine)
         lowerLeft = intersect(lowerLine, leftLine)
         lowerRight = intersect(lowerLine, rightLine)
 
-        upperLeft = [upperLeft[0]-borderToLeave[2]+offsetX, upperLeft[1]-borderToLeave[0]+offsetY]
-        upperRight = [upperRight[0]+borderToLeave[3]+offsetX, upperRight[1]-borderToLeave[0]+offsetY]
-        lowerLeft = [lowerLeft[0]-borderToLeave[2]+offsetX, lowerLeft[1]+borderToLeave[1]+offsetY]
-        lowerRight = [lowerRight[0]+borderToLeave[3]+offsetX, lowerRight[1]+borderToLeave[1]+offsetY]
-        targetWidth = max(upperRight[0] - upperLeft[0], lowerRight[0] - lowerLeft[0])
-        targetHeight = max(lowerRight[1] - upperRight[1], lowerLeft[1] - upperLeft[1])
+        upperLeft = [upperLeft[0]+offsetX, upperLeft[1]+offsetY]
+        upperRight = [upperRight[0]+offsetX, upperRight[1]+offsetY]
+        lowerLeft = [lowerLeft[0]+offsetX, lowerLeft[1]+offsetY]
+        lowerRight = [lowerRight[0]+offsetX, lowerRight[1]+offsetY]
+        cardWidth = max(upperRight[0] - upperLeft[0], lowerRight[0] - lowerLeft[0])
+        cardHeight = max(lowerRight[1] - upperRight[1], lowerLeft[1] - upperLeft[1])
 
         if not (upperLeft and upperRight and lowerLeft and lowerRight):
             print("ERROR: Lines do not intersect")
@@ -297,13 +271,12 @@ def processImage(baseImg, cleanImg, border, trim, expand, edge, debug=False, sho
             else:
                 return src
 
-        middlePoint = [round(targetWidth / 2 + borderToLeave[2]), round(targetHeight / 2 + borderToLeave[0])]
-        offsetMidPoint = [middlePoint[0] + offsetX, middlePoint[1] + offsetY]
-        upperMid = [offsetMidPoint[0], max(0, upperMid[1] - borderToLeave[0])+offsetY]
-        lowerMid = [offsetMidPoint[0], min(src.shape[0], lowerMid[1] + borderToLeave[1])+offsetY]
-        leftMid = [max(0, leftMid[0] - borderToLeave[2])+offsetX, offsetMidPoint[1]]
-        rightMid = [min(src.shape[1], rightMid[0] + borderToLeave[3])+offsetX, offsetMidPoint[1]]
 
+        midPoint = (Decimal(round(cardWidth / 2) + offsetX), Decimal(round(cardHeight / 2) + offsetY))
+        upperMid = [midPoint[0], max(0, upperMid[1])+offsetY]
+        lowerMid = [midPoint[0], min(src.shape[0], lowerMid[1])+offsetY]
+        leftMid = [max(0, leftMid[0])+offsetX, midPoint[1]]
+        rightMid = [min(src.shape[1], rightMid[0])+offsetX, midPoint[1]]
 
         if debug:
             print("UpperLeft: " + str(upperLeft))
@@ -314,122 +287,82 @@ def processImage(baseImg, cleanImg, border, trim, expand, edge, debug=False, sho
             print("lowerMid: " + str(lowerMid))
             print("leftMid: " + str(leftMid))
             print("rightMid: " + str(rightMid))
-            print("middlePoint: " + str(middlePoint))
-            print("targetWidth: " + str(targetWidth))
-            print("targetHeight: " + str(targetHeight))
+            print("middlePoint: " + str(midPoint))
+            print("cardWidth: " + str(cardWidth))
+            print("cardHeight: " + str(cardHeight))
 
-        if trim:
+        if res:
+            targetWidth = round(res[0] / (1+border[2]+border[3]))
+            targetHeight = round(res[1] / (1+border[0]+border[1]))
+        else:
+            targetWidth = cardWidth
+            targetHeight = cardHeight
 
-            srcP = np.array( #todo add outer mesh
-                [upperLeft, leftMid, lowerLeft, lowerMid, [offsetX + middlePoint[0], offsetY + middlePoint[1]], upperMid, upperRight, rightMid, lowerRight], dtype="float64")
-            dstP = np.array([[offsetX,offsetY], [offsetX, middlePoint[1] + offsetY], [offsetX, targetHeight + offsetY],
-                             [offsetX + middlePoint[0], targetHeight + offsetY], [offsetX + middlePoint[0], offsetY + middlePoint[1]],
-                             [offsetX + middlePoint[0], offsetY], [offsetX+targetWidth, offsetY],
-                             [offsetX+targetWidth, middlePoint[1]+offsetY], [targetWidth+offsetX, targetHeight + offsetY]],dtype="float64")
+        targetOffsetX = round(targetHeight*extraSpace[0])
+        targetOffsetY = round(targetWidth*extraSpace[1])
+        targetCard = [targetOffsetX, targetOffsetX+targetHeight,targetOffsetY,targetOffsetY+targetWidth]
+        targetMid = (Decimal(round(targetHeight*(0.5+extraSpace[0]))), Decimal(round(targetWidth*(0.5+extraSpace[1])))]
+        srcP = np.array(
+            calculateOuterAndInnerPoint(upperLeft, midPoint, extraSpace) +
+             calculateOuterAndInnerPoint(leftMid, midPoint, extraSpace) +
+             calculateOuterAndInnerPoint(lowerLeft, midPoint, extraSpace) +
+             calculateOuterAndInnerPoint(lowerMid, midPoint, extraSpace) +
+             midPoint +
+             calculateOuterAndInnerPoint(upperMid, midPoint, extraSpace) +
+             calculateOuterAndInnerPoint(upperRight, midPoint, extraSpace) +
+             calculateOuterAndInnerPoint(rightMid, midPoint, extraSpace) +
+             calculateOuterAndInnerPoint(lowerRight, midPoint, extraSpace), dtype="float64")
+
+        dstP = np.array(
+            calculateOuterAndInnerPoint([targetCard[2], targetCard[0]], targetMid, extraSpace) +
+             calculateOuterAndInnerPoint([targetCard[2], targetMid[1]], targetMid, extraSpace) +
+             calculateOuterAndInnerPoint([targetCard[2], targetCard[1]], targetMid, extraSpace) +
+             calculateOuterAndInnerPoint([targetMid[0], targetCard[1]], targetMid, extraSpace) +
+             targetMid +
+             calculateOuterAndInnerPoint([targetMid[0], targetCard[0]], targetMid, extraSpace) +
+             calculateOuterAndInnerPoint([targetCard[3], targetCard[0]], targetMid, extraSpace) +
+             calculateOuterAndInnerPoint([targetCard[3], targetMid[1]], targetMid, extraSpace) +
+             calculateOuterAndInnerPoint([targetCard[3], targetCard[1]], targetMid, extraSpace), dtype="float64")
+        if debug:
             print(srcP)
             print(dstP)
-            double = cv.copyMakeBorder(src, src.shape[0] * 2, src.shape[0] * 2, src.shape[1] * 2, src.shape[1] * 2,
-                                       cv.BORDER_CONSTANT, (0, 0, 0, 0))
-            print(src)
-            double = skimage.util.img_as_ubyte(double)
-            double = double[:, :, ::-1]
-            tform = PiecewiseAffineTransform()
-            tform.estimate(srcP, dstP)
-            #cv.imshow("double", double)
-            warped = warp(double, tform, output_shape=(src.shape[0]*2, src.shape[1]*2))
-            cv.imshow("warped", warped)
-            #cv.waitKey()
+            print(offsetX)
+            print(offsetY)
+        src = cv.cvtColor(src, cv.COLOR_BGR2BGRA)
+        bordered = addBlurredExtendBorder(src, round(offsetY), round(offsetY), round(offsetX), round(offsetX))
 
+        tform = PiecewiseAffineTransform()
+        tform.estimate(dstP, srcP)
 
-            # with wandImage(width=src.shape[1]*2, height=src.shape[0]*2) as canvas:
-            #     canvas.alpha_channel = "transparent"
-            #     canvas.virtual_pixel = "transparent"
-            #     canvas.background_color = "transparent"
-            #     cutX = middlePoint[0]
-            #     cutY = middlePoint[1]
-            #     MMPerspective = (float(offsetMidPoint[0]), float(offsetMidPoint[1]), float(offsetX + cutX), float(cutY +offsetY))
-            #     LeMperspective = (float(leftMid[0]), float(leftMid[1]), float(offsetX), float(cutY + offsetY))
-            #     RMperspective = rightMid + (offsetX+targetWidth, cutY+offsetY)
-            #     LoMperspective = lowerMid + (offsetX + cutX, targetHeight + offsetY)
-            #     UMperspective = (float(upperMid[0]), float(upperMid[1]), float(offsetX + cutX), float(offsetY))
-            #     with wandImage.from_array(src) as img:
-            #         img.alpha_channel = True
-            #         img.virtual_pixel = "transparent"
-            #         img.background_color = "transparent"
-            #
-            #         wandSrcUL = img[:cutX, :cutY]
-            #         wandSrcUL.extent(src.shape[1] * 2, src.shape[0] * 2, round(-offsetX), round(-offsetY))
-            #
-            #         wandSrcLL = img[:cutX, cutY:]
-            #         wandSrcLL.extent(src.shape[1] * 2, src.shape[0] * 2, round(-offsetX), round(-offsetY - cutY))
-            #
-            #         wandSrcLR = img[cutX:, cutY:]
-            #         wandSrcLR.extent(src.shape[1] * 2, src.shape[0] * 2, round(-offsetX - cutX), round(-offsetY - cutY))
-            #
-            #         wandSrcUR = img[cutX:, :cutY]
-            #         wandSrcUR.extent(src.shape[1] * 2, src.shape[0] * 2, round(-offsetX - cutX), round(-offsetY))
-            #
-            #         print("before perspectives")
-            #         print((float(upperLeft[0]), float(upperLeft[1]), float(offsetX), float(offsetY)) + LeMperspective + MMPerspective + UMperspective)
-            #         wandSrcUL.distort("perspective", (float(upperLeft[0]), float(upperLeft[1]), float(offsetX), float(offsetY)) + LeMperspective + MMPerspective + UMperspective)
-            #         print("ul done")
-            #         print(LeMperspective + lowerLeft + (offsetX, cutY + offsetY) + LoMperspective + MMPerspective)
-            #         wandSrcLL.distort("perspective", LeMperspective + lowerLeft + (offsetX, targetHeight + offsetY) + LoMperspective + MMPerspective)
-            #         print("ll done")
-            #         print(MMPerspective + LoMperspective + lowerRight + (cutX+offsetX, cutY+offsetY) + RMperspective)
-            #         wandSrcLR.distort("perspective", MMPerspective + LoMperspective + lowerRight + (targetWidth+offsetX, targetHeight + offsetY) + RMperspective)
-            #         print("lr done")
-            #         print(UMperspective + MMPerspective + RMperspective + upperRight + (cutX+offsetX, offsetY))
-            #         wandSrcUR.distort("perspective", UMperspective + MMPerspective + RMperspective + upperRight + (offsetX+targetWidth, offsetY))
-            #         print("after perspectives")
-            #         canvas.composite(wandSrcUL, 0, 0, "plus")
-            #         canvas.composite(wandSrcUR, 0, 0, "plus")
-            #         canvas.composite(wandSrcLL, 0, 0, "plus")
-            #         canvas.composite(wandSrcLR, 0, 0, "plus")
-            #
-            #         ULImage = np.array(wandSrcUL)
-            #         URImage = np.array(wandSrcUR)
-            #         LLImage = np.array(wandSrcLL)
-            #         LRImage = np.array(wandSrcLR)
-            #         warped = np.array(canvas) #TODO trim
-            #         if debug:
-            #             cv.imshow("UL", ULImage)
-            #             cv.imshow("UR", URImage)
-            #             cv.imshow("LL", LLImage)
-            #             cv.imshow("LR", LRImage)
-            #             cv.imshow("canvas", warped)
-            #             # cv.waitKey()
+        warped = img_as_ubyte(warp(bordered, tform, output_shape=(round(targetHeight+targetOffsetY*2), round(targetWidth+targetOffsetX*2))))
 
-            # ULImage = warpPerspective(src, targetWidth / 2 + borderToLeave[2], targetHeight / 2 + borderToLeave[0],
-            #                           np.array([upperLeft, upperMid, middlePoint, leftMid], dtype="float32"), debug)
-            # URImage = warpPerspective(src, targetWidth / 2 + borderToLeave[3], targetHeight / 2 + borderToLeave[0],
-            #                           np.array([upperMid, upperRight, rightMid, middlePoint], dtype="float32"), debug)
-            # LLImage = warpPerspective(src, targetWidth / 2 + borderToLeave[2], targetHeight / 2 + borderToLeave[1],
-            #                           np.array([leftMid, middlePoint, lowerMid, lowerLeft], dtype="float32"), debug)
-            # LRImage = warpPerspective(src, targetWidth / 2 + borderToLeave[3], targetHeight / 2 + borderToLeave[1],
-            #                           np.array([middlePoint, rightMid, lowerRight, lowerMid], dtype="float32"), debug)
+        # for row in warped:
+        #     for col in row:
+        #         print(col)
+        if trim:
+            warped = warped[targetCard[0]:targetCard[1], targetCard[2]:targetCard[3]]
 
-            #warped = cv.vconcat([cv.hconcat([ULImage, URImage]), cv.hconcat([LLImage, LRImage])])
-        else:
-            warped = np.copy(src)
-        if expand:
-            warped = cv.cvtColor(warped, cv.COLOR_BGR2BGRA)
-            cardSize = (warped.shape[0] - (borderToLeave[0] + borderToLeave[1]),
-                        warped.shape[1] - (borderToLeave[2] + borderToLeave[3]))
-            expanded = cv.copyMakeBorder(warped, round(cardSize[0] * Decimal(expand[0]) - borderToLeave[0]),
-                                         round(cardSize[0] * Decimal(expand[1]) - borderToLeave[1]),
-                                         round(cardSize[1] * Decimal(expand[2]) - borderToLeave[2]),
-                                         round(cardSize[1] * Decimal(expand[3]) - borderToLeave[3]), cv.BORDER_CONSTANT,
-                                         (0, 0, 0, 0))
-        else:
-            expanded = np.copy(warped)
+        if not border:
+            border = [0, 0, 0, 0]
+        border = [round(cardHeight * Decimal(border[0])), round(cardHeight * Decimal(border[1])), round(cardWidth * Decimal(border[2])), round(cardWidth * Decimal(border[3]))]
 
+        adjustNeeded = [(targetCard[0] - border[0])*-1, (targetCard[1] + border[1]-1) - warped.shape[0], (targetCard[2] - border[2])*-1, (targetCard[3] + border[3] -1) - warped.shape[1]]
+        if debug:
+            print(adjustNeeded)
+        if any(side < 0 for side in adjustNeeded):
+            if debug:
+                print(max(0, adjustNeeded[0] * -1))
+                print(min(-1, adjustNeeded[1]))
+                print(max(0, adjustNeeded[2] * -1))
+                print(min(-1, adjustNeeded[3]))
+            warped = warped[max(0, adjustNeeded[0] * -1):min(-1, adjustNeeded[1]-1), max(0, adjustNeeded[2] * -1):min(-1, adjustNeeded[3]-1)]
+        if any(side > 0 for side in adjustNeeded):
+            warped = addBlurredExtendBorder(warped,max(0, border[0]),max(0, border[1]),max(0, border[2]),max(0, border[3]))
         if show:
-            return expanded, edges, cEdges, cdstV, cdstH
+            return warped, edges, cEdges, cdstV, cdstH
         else:
-            return expanded
+            return warped
     else:
-        print("H Threshold:" + str(round(threshold)))
         print("ERROR: 4 lines not found in image " + baseImg)
         if debug:
             return src, edges, cEdges, cdstV, cdstH
@@ -448,33 +381,32 @@ def processMultiArg(arg, numNeeded):
 def processArgs(inputText):
     input = None
     clean = None
-    deborder = os.path.join(os.getcwd(), "debordered")
+    output = os.path.join(os.getcwd(), "output")
     border = None
-    trim = True
-    expand = None
+    trim = False
     edge = None
     show = False
     debug = False
+    res = [734, 1024]
 
     msg = "Improves old pokemon card scans"
     parser = argparse.ArgumentParser(description=msg)
     parser.add_argument("-i", "--Input", help="Set Input" + inputText)
-    parser.add_argument("-d", "--Deborder", help="Set Deborder" + inputText)
+    parser.add_argument("-o", "--Output", help="Set Output" + inputText)
     parser.add_argument("-c", "--Clean", help="Set Clean Images" + inputText)
-    parser.add_argument("-de", "--Debug", help="Enable debug prints default False" + inputText)
+    parser.add_argument("-d", "--Debug", help="Enable debug prints default False" + inputText)
     parser.add_argument("-b", "--BorderSize",
                         help="Set the size of the 4 borders to trim to \n"
                              "Accepts 4 numbers seperated by commas, as so: 't,b,l,r'\n"
-                             "defaults to 0,0,0,0")
-    parser.add_argument("-e", "--Expand",
-                        help="Adds empty space after each border up to a certain ratio of the card. \n"
-                             "Accepts 4 numbers seperated by commas, as so: 't,b,l,r'")
-    parser.add_argument("-ef", "--EdgeFiltering",
+                             "May result in transparent edges. defaults to 0,0,0,0")
+    parser.add_argument("-e", "--EdgeFiltering",
                         help="customises the filtering of lines too far away from the edge. \n"
                              "Accepts 4 numbers seperated by commas, as so: 't,b,l,r'. \n"
                              "default is Y res dependent, 27 at 800")
-    parser.add_argument("-tr", "--Trim", help="decides whether or not to trim and deskew the image. default True")
+    parser.add_argument("-t", "--Trim", help="If enabled, trim all the original border off of the image. default False")
     parser.add_argument("-s", "--Show", help="show images instead of saving them. default False")
+    parser.add_argument("-r", "--Resolution", help="The resolution of the output, as so: 'x,y'.\n"
+                                                   "Default: existing card size")
 
     args = parser.parse_args()
 
@@ -482,8 +414,8 @@ def processArgs(inputText):
         input = args.Input
     if args.Clean:
         clean = args.Clean
-    if args.Deborder:
-        deborder = args.Deborder
+    if args.Output:
+        output = args.Output
     if args.Debug:
         debug = args.Debug
     if args.Show:
@@ -492,45 +424,44 @@ def processArgs(inputText):
         border = processMultiArg(args.BorderSize, 4)
     if args.Trim:
         trim = bool(args.Trim)
-    if args.Expand:
-        expand = processMultiArg(args.Expand, 4)
     if args.EdgeFiltering:
         edge = processMultiArg(args.EdgeFiltering, 4)
-    return input, clean, deborder, border, trim, expand, edge, debug, show
+    if args.Resolution:
+        res = processMultiArg(args.Resolution, 2)
+    return input, clean, output, border, trim, edge, res, debug, show
 
 
-def resolveImage(input, clean, deborder, border, trim, expand, edge, debug, show):
+def resolveImage(input, clean, output, border, trim, edge, res, debug, show):
     print("processing " + input)
     if show:
-        image, dst, cdst, cdstV, cdstH = processImage(input, clean, border, trim, expand, edge, debug, show)
+        image, dst, cdst, cdstV, cdstH = processImage(input, clean, border, trim, edge, res, debug, show)
         cv.imshow("edges", dst)
         cv.imshow("Horizontal Lines - Standard Hough Line Transform", cdstH)
         cv.imshow("Vertical Lines - Standard Hough Line Transform", cdstV)
         cv.imshow("4 main lines - Probabilistic Line Transform", cdst)
-        cv.imshow("debordered", image)
+        cv.imshow("outputed", image)
         cv.waitKey()
     else:
-        image = processImage(input, clean, border, trim, expand, edge, debug)
+        image = processImage(input, clean, border, trim, edge, res, debug, show)
         if image is not None:
-            cv.imwrite(deborder, image)
+            cv.imwrite(output, image)
 
 
 def main():
-    input, clean, deborder, border, trim, expand, edge, debug, show = processArgs("folder")
+    input, clean, output, border, trim, edge, res, debug, show = processArgs("folder")
     if not input:
         input = os.path.join(os.getcwd(), "input")
     if not clean:
         clean = os.path.join(os.getcwd(), "temp")
-    if not border:
-        border = [0, 0, 0, 0]
+
     with os.scandir(input) as entries:
         for entry in entries:
             if entry.is_file() and entry.name != "Place Images Here":
                 imgname, extension = os.path.splitext(os.path.basename(entry.name))
                 cleanPath = os.path.join(clean, imgname + ".png")
-                deborderPath = os.path.join(deborder, imgname + ".png")
+                outputPath = os.path.join(output, imgname + ".png")
                 inputPath = os.path.join(input, entry.name)
-                resolveImage(inputPath, cleanPath, deborderPath, border, trim, expand, edge, debug, show)
+                resolveImage(inputPath, cleanPath, outputPath, border, trim, edge, res, debug, show)
 
 
 if __name__ == "__main__":
