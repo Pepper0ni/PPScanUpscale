@@ -4,11 +4,9 @@ import numpy as np
 import os
 import argparse
 from decimal import Decimal
-from wand.image import Image as wandImage
 from skimage.transform import PiecewiseAffineTransform, warp
 from skimage.util import img_as_ubyte
-from skimage import data
-from skimage import io
+import maskcorners
 
 ANGLE_TOLERANCE = 0.025  # in radians
 DEFAULT_BORDER_TOLERANCE = 0.0327272727273  # multiplied by y coord
@@ -53,10 +51,10 @@ def intersect(line1, line2):
 
 def addBlurredExtendBorder(src,top,bottom,left,right):
     blurred = cv.blur(src,(5,5))
-    blurred = cv.copyMakeBorder(blurred, top, bottom, left, right, cv.BORDER_REPLICATE)
+    blurred = cv.copyMakeBorder(blurred, round(top), round(bottom), round(left), round(right), cv.BORDER_REPLICATE)
     #cv.imshow("bordered", blurred)
     blurred = cv.GaussianBlur(blurred,(9,9), 0)
-    blurred[top:src.shape[0] + top, left:src.shape[1] + left, :] = src
+    blurred[round(top):round(src.shape[0] + top), round(left):round(src.shape[1] + left), :] = src
     return blurred
 
 def trimNegLine(pt1, pt2):
@@ -184,9 +182,9 @@ def processLines(img, lines, axis, edge, debug):
     return drawImg, maxLine, maxMid, minLine, minMid
 
 def calculateOuterAndInnerPoint(pnt, middle, extraSpace):
-    return ([pnt[0]+((pnt[0]-middle[0])*Decimal(extraSpace[0])), pnt[1]+((pnt[1]-middle[1])*Decimal(extraSpace[1]))], pnt)
+    return [[pnt[0]+((pnt[0]-middle[0])*(extraSpace[0]*2)), pnt[1]+((pnt[1]-middle[1])*(extraSpace[1]*2))], pnt]
 
-def processImage(baseImg, cleanImg, border, trim, edge, res, debug=False, show=False):
+def processImage(baseImg, cleanImg, border, trim, edge, res, mask, debug=False, show=False):
     src = cv.imread(cv.samples.findFile(baseImg))
     clean = cv.imread(cv.samples.findFile(cleanImg))
 
@@ -195,7 +193,7 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, debug=False, show=F
         return
     if clean is None:
         print('Clean Image at ' + cleanImg + ' Not Found, attempting with base image')
-        clean = src #cv.imread(cv.samples.findFile(baseImg))
+        clean = src
 
     edges = cv.Canny(clean, 25, 500, True, 5)
 
@@ -228,7 +226,12 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, debug=False, show=F
             break
     if debug:
         print("V Threshold: " + str(round(threshold)))
-    extraSpace = [0.1, 0.1]
+
+    if not border:
+        border = [0, 0, 0, 0]
+    extraSpace = [max(border[0], border[1])+Decimal(0.05), max(border[2], border[3])+Decimal(0.05)]
+    if debug:
+        print("extraSpace: " + str(extraSpace))
     offsetX = Decimal(round(src.shape[0]*extraSpace[0]))
     offsetY = Decimal(round(src.shape[1]*extraSpace[1]))
 
@@ -271,8 +274,7 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, debug=False, show=F
             else:
                 return src
 
-
-        midPoint = (Decimal(round(cardWidth / 2) + offsetX), Decimal(round(cardHeight / 2) + offsetY))
+        midPoint = [Decimal(cardWidth / 2) + offsetX, Decimal(cardHeight / 2) + offsetY]
         upperMid = [midPoint[0], max(0, upperMid[1])+offsetY]
         lowerMid = [midPoint[0], min(src.shape[0], lowerMid[1])+offsetY]
         leftMid = [max(0, leftMid[0])+offsetX, midPoint[1]]
@@ -290,74 +292,82 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, debug=False, show=F
             print("middlePoint: " + str(midPoint))
             print("cardWidth: " + str(cardWidth))
             print("cardHeight: " + str(cardHeight))
+            print("border: " + str(border))
 
         if res:
-            targetWidth = round(res[0] / (1+border[2]+border[3]))
-            targetHeight = round(res[1] / (1+border[0]+border[1]))
+            border = [res[1] * Decimal(border[0]), res[1] * Decimal(border[1]), res[0] * Decimal(border[2]),
+                      res[0] * Decimal(border[3])]
+            targetWidth = round(res[0] - (border[2]+border[3]))
+            targetHeight = round(res[1] - (border[0]+border[1]))
         else:
             targetWidth = cardWidth
             targetHeight = cardHeight
+            border = [Decimal((cardHeight * border[0])), Decimal((cardHeight * border[1])), Decimal((cardWidth * border[2])),
+                      Decimal((cardWidth * border[3]))]
 
-        targetOffsetX = round(targetHeight*extraSpace[0])
-        targetOffsetY = round(targetWidth*extraSpace[1])
-        targetCard = [targetOffsetX, targetOffsetX+targetHeight,targetOffsetY,targetOffsetY+targetWidth]
-        targetMid = (Decimal(round(targetHeight*(0.5+extraSpace[0]))), Decimal(round(targetWidth*(0.5+extraSpace[1])))]
+        targetOffsetX = Decimal(round(((targetWidth*extraSpace[0]))*2)/2)
+        targetOffsetY = Decimal(round(((targetHeight*extraSpace[1]))*2)/2)
+        targetCard = [targetOffsetY, targetOffsetY+targetHeight, targetOffsetX, targetOffsetX+targetWidth]
+        targetMid = (Decimal(targetWidth*(Decimal(0.5)+extraSpace[0])), Decimal(targetHeight*(Decimal(0.5)+extraSpace[1])))
+        if debug:
+            print("border: " + str(border))
+            print("extraSpace: " + str(extraSpace))
+            print("targetwidth: " + str(targetWidth))
+            print("targethieght: " + str(targetHeight))
+            print("targetmid: " + str(targetMid))
+            print("targetcard: " + str(targetCard))
         srcP = np.array(
             calculateOuterAndInnerPoint(upperLeft, midPoint, extraSpace) +
-             calculateOuterAndInnerPoint(leftMid, midPoint, extraSpace) +
-             calculateOuterAndInnerPoint(lowerLeft, midPoint, extraSpace) +
-             calculateOuterAndInnerPoint(lowerMid, midPoint, extraSpace) +
-             midPoint +
-             calculateOuterAndInnerPoint(upperMid, midPoint, extraSpace) +
-             calculateOuterAndInnerPoint(upperRight, midPoint, extraSpace) +
-             calculateOuterAndInnerPoint(rightMid, midPoint, extraSpace) +
-             calculateOuterAndInnerPoint(lowerRight, midPoint, extraSpace), dtype="float64")
+            calculateOuterAndInnerPoint(leftMid, midPoint, extraSpace) +
+            calculateOuterAndInnerPoint(lowerLeft, midPoint, extraSpace) +
+            calculateOuterAndInnerPoint(lowerMid, midPoint, extraSpace) +
+            [midPoint] +
+            calculateOuterAndInnerPoint(upperMid, midPoint, extraSpace) +
+            calculateOuterAndInnerPoint(upperRight, midPoint, extraSpace) +
+            calculateOuterAndInnerPoint(rightMid, midPoint, extraSpace) +
+            calculateOuterAndInnerPoint(lowerRight, midPoint, extraSpace), dtype="float64")
 
         dstP = np.array(
             calculateOuterAndInnerPoint([targetCard[2], targetCard[0]], targetMid, extraSpace) +
              calculateOuterAndInnerPoint([targetCard[2], targetMid[1]], targetMid, extraSpace) +
              calculateOuterAndInnerPoint([targetCard[2], targetCard[1]], targetMid, extraSpace) +
              calculateOuterAndInnerPoint([targetMid[0], targetCard[1]], targetMid, extraSpace) +
-             targetMid +
+             [targetMid] +
              calculateOuterAndInnerPoint([targetMid[0], targetCard[0]], targetMid, extraSpace) +
              calculateOuterAndInnerPoint([targetCard[3], targetCard[0]], targetMid, extraSpace) +
              calculateOuterAndInnerPoint([targetCard[3], targetMid[1]], targetMid, extraSpace) +
              calculateOuterAndInnerPoint([targetCard[3], targetCard[1]], targetMid, extraSpace), dtype="float64")
+
         if debug:
             print(srcP)
             print(dstP)
             print(offsetX)
             print(offsetY)
+
         src = cv.cvtColor(src, cv.COLOR_BGR2BGRA)
         bordered = addBlurredExtendBorder(src, round(offsetY), round(offsetY), round(offsetX), round(offsetX))
 
         tform = PiecewiseAffineTransform()
         tform.estimate(dstP, srcP)
-
         warped = img_as_ubyte(warp(bordered, tform, output_shape=(round(targetHeight+targetOffsetY*2), round(targetWidth+targetOffsetX*2))))
 
-        # for row in warped:
-        #     for col in row:
-        #         print(col)
         if trim:
             warped = warped[targetCard[0]:targetCard[1], targetCard[2]:targetCard[3]]
 
-        if not border:
-            border = [0, 0, 0, 0]
-        border = [round(cardHeight * Decimal(border[0])), round(cardHeight * Decimal(border[1])), round(cardWidth * Decimal(border[2])), round(cardWidth * Decimal(border[3]))]
-
-        adjustNeeded = [(targetCard[0] - border[0])*-1, (targetCard[1] + border[1]-1) - warped.shape[0], (targetCard[2] - border[2])*-1, (targetCard[3] + border[3] -1) - warped.shape[1]]
+        adjustNeeded = [round(round(targetCard[0] - border[0]) * Decimal(-1)),
+                        round(round(targetCard[1] + border[1]) - warped.shape[0]),
+                        round(round(targetCard[2] - border[2]) * Decimal(-1)),
+                        round(round(targetCard[3] + border[3]) - warped.shape[1])]
         if debug:
-            print(adjustNeeded)
+            print("adjustNeeded: " + str(adjustNeeded))
         if any(side < 0 for side in adjustNeeded):
-            if debug:
-                print(max(0, adjustNeeded[0] * -1))
-                print(min(-1, adjustNeeded[1]))
-                print(max(0, adjustNeeded[2] * -1))
-                print(min(-1, adjustNeeded[3]))
-            warped = warped[max(0, adjustNeeded[0] * -1):min(-1, adjustNeeded[1]-1), max(0, adjustNeeded[2] * -1):min(-1, adjustNeeded[3]-1)]
+            warped = warped[max(0, adjustNeeded[0] * -1):len(warped)+min(0, adjustNeeded[1]), max(0, adjustNeeded[2] * -1):len(warped[0])+min(0, adjustNeeded[3])]
         if any(side > 0 for side in adjustNeeded):
-            warped = addBlurredExtendBorder(warped,max(0, border[0]),max(0, border[1]),max(0, border[2]),max(0, border[3]))
+            warped = addBlurredExtendBorder(warped, max(0, border[0]), max(0, border[1]), max(0, border[2]), max(0, border[3]))
+
+        if mask:
+            warped = maskcorners.processMask(warped, mask)
+
         if show:
             return warped, edges, cEdges, cdstV, cdstH
         else:
@@ -372,7 +382,7 @@ def processMultiArg(arg, numNeeded):
     arg = arg.split(",")
     argList = []
     for num in arg:
-        argList.append(float(num))
+        argList.append(Decimal(num))
     if len(argList) != numNeeded:
         raise ValueError("EdgeFiltering must have exactly 4 numbers")
     return argList
@@ -388,6 +398,7 @@ def processArgs(inputText):
     show = False
     debug = False
     res = [734, 1024]
+    mask = None
 
     msg = "Improves old pokemon card scans"
     parser = argparse.ArgumentParser(description=msg)
@@ -407,6 +418,9 @@ def processArgs(inputText):
     parser.add_argument("-s", "--Show", help="show images instead of saving them. default False")
     parser.add_argument("-r", "--Resolution", help="The resolution of the output, as so: 'x,y'.\n"
                                                    "Default: existing card size")
+    parser.add_argument("-m", "--Mask", help="Mask the card using the provided mask.\n"
+                                             "good for rounded corners.")
+
 
     args = parser.parse_args()
 
@@ -428,13 +442,15 @@ def processArgs(inputText):
         edge = processMultiArg(args.EdgeFiltering, 4)
     if args.Resolution:
         res = processMultiArg(args.Resolution, 2)
-    return input, clean, output, border, trim, edge, res, debug, show
+    if args.Mask:
+        mask = args.Mask
+    return input, clean, output, border, trim, edge, res, mask, debug, show
 
 
-def resolveImage(input, clean, output, border, trim, edge, res, debug, show):
+def resolveImage(input, clean, output, border, trim, edge, res, mask, debug, show):
     print("processing " + input)
     if show:
-        image, dst, cdst, cdstV, cdstH = processImage(input, clean, border, trim, edge, res, debug, show)
+        image, dst, cdst, cdstV, cdstH = processImage(input, clean, border, trim, edge, res, mask, debug, show)
         cv.imshow("edges", dst)
         cv.imshow("Horizontal Lines - Standard Hough Line Transform", cdstH)
         cv.imshow("Vertical Lines - Standard Hough Line Transform", cdstV)
@@ -442,13 +458,13 @@ def resolveImage(input, clean, output, border, trim, edge, res, debug, show):
         cv.imshow("outputed", image)
         cv.waitKey()
     else:
-        image = processImage(input, clean, border, trim, edge, res, debug, show)
+        image = processImage(input, clean, border, trim, edge, res, mask, debug, show)
         if image is not None:
             cv.imwrite(output, image)
 
 
 def main():
-    input, clean, output, border, trim, edge, res, debug, show = processArgs("folder")
+    input, clean, output, border, trim, edge, res, mask, debug, show = processArgs("folder")
     if not input:
         input = os.path.join(os.getcwd(), "input")
     if not clean:
@@ -461,7 +477,7 @@ def main():
                 cleanPath = os.path.join(clean, imgname + ".png")
                 outputPath = os.path.join(output, imgname + ".png")
                 inputPath = os.path.join(input, entry.name)
-                resolveImage(inputPath, cleanPath, outputPath, border, trim, edge, res, debug, show)
+                resolveImage(inputPath, cleanPath, outputPath, border, trim, edge, res, mask, debug, show)
 
 
 if __name__ == "__main__":
