@@ -11,6 +11,8 @@ import maskcorners
 ANGLE_TOLERANCE = 0.025  # in radians
 DEFAULT_BORDER_TOLERANCE = 0.0327272727273  # multiplied by y coord
 
+
+
 def angleToColour():  # rad):
     return (0, 255, 0)
     degrees = abs(rad) * 180 / np.pi
@@ -462,6 +464,20 @@ def resolveImage(input, clean, output, border, trim, edge, res, mask, debug, sho
         if image is not None:
             cv.imwrite(output, image)
 
+def processFolder(input, clean, output, border, trim, edge, res, mask, debug, show):
+    try:
+        os.mkdir(output)
+    except FileExistsError:
+        pass
+    with os.scandir(input) as entries:
+        for entry in entries:
+            inputPath = os.path.join(input, entry.name)
+            outputPath = os.path.join(output, entry.name)
+            cleanPath = os.path.join(clean, entry.name)
+            if os.path.isfile(inputPath) and entry.name != "Place Images Here":
+                resolveImage(inputPath, cleanPath, outputPath, border, trim, edge, res, mask, debug, show)
+            elif os.path.isdir(inputPath):
+                processFolder(inputPath, cleanPath, outputPath, border, trim, edge, res, mask, debug, show)
 
 def main():
     input, clean, output, border, trim, edge, res, mask, debug, show = processArgs("folder")
@@ -469,15 +485,12 @@ def main():
         input = os.path.join(os.getcwd(), "input")
     if not clean:
         clean = os.path.join(os.getcwd(), "temp")
-
-    with os.scandir(input) as entries:
-        for entry in entries:
-            if entry.is_file() and entry.name != "Place Images Here":
-                imgname, extension = os.path.splitext(os.path.basename(entry.name))
-                cleanPath = os.path.join(clean, imgname + ".png")
-                outputPath = os.path.join(output, imgname + ".png")
-                inputPath = os.path.join(input, entry.name)
-                resolveImage(inputPath, cleanPath, outputPath, border, trim, edge, res, mask, debug, show)
+    if os.path.isfile(input):
+        resolveImage(input, clean, output, border, trim, edge, res, mask, debug, show)
+    elif os.path.isdir(input):
+        processFolder(input, clean, output, border, trim, edge, res, mask, debug, show)
+    else:
+        print("Input file not found.")
 
 
 if __name__ == "__main__":
