@@ -8,10 +8,12 @@ from skimage.transform import PiecewiseAffineTransform, warp
 from skimage.util import img_as_ubyte
 import skimage.draw
 import maskcorners
+import operator
+from contextlib import suppress
 
 ANGLE_TOLERANCE = 0.01  # in radians
 DEFAULT_BORDER_TOLERANCE = 0.0327272727273  # multiplied by y coord
-DEFAULT_H_THRESHOLD = 0.475
+DEFAULT_H_THRESHOLD = 0.225
 DEFAULT_V_THRESHOLD = 0.475
 
 def angleToColour():  # rad):
@@ -33,37 +35,77 @@ def angleToColour():  # rad):
         red = 0
     return blue, green, red
 
-def sumLinePixels(img, pt1, pt2):
-    #testimg = cv.cvtColor(np.copy(img), cv.COLOR_GRAY2BGR)
-    #cv.line(testimg, (round(pt1[0]), round(pt1[1])), (round(pt2[0]), round(pt2[1])), (0, 0, 255), 1, cv.LINE_AA)
-    testimg = np.zeros(shape=img.shape, dtype=np.uint8)
-    rating = 0
-    pointsList = list(zip(*skimage.draw.line(int(pt1[0]), int(pt1[1]), int(pt2[0]), int(pt2[1]))))
-    for x, y in pointsList:
-        if x < img.shape[1] and y < img.shape[0]:
-            rating += img[y, x]
-    #         testimg[y, x] = img[y, x]
-    # cv.imshow("found", testimg)
-    # cv.waitKey()
-    return rating/255
-
 def intersect(line1, line2):
     denom = (line2[1][1] - line2[0][1]) * (line1[1][0] - line1[0][0]) - (line2[1][0] - line2[0][0]) * (
                 line1[1][1] - line1[0][1])
     if denom == 0:
-        print("Lines parallel")
+        #print("Lines parallel")
         return None
     ua = ((line2[1][0] - line2[0][0]) * (line1[0][1] - line2[0][1]) - (line2[1][1] - line2[0][1]) * (
                 line1[0][0] - line2[0][0])) / denom
     if ua < 0 or ua > 1:
-        print("Lines out of range 1")
+        #print("Lines out of range 1")
         return None
     ub = ((line1[1][0] - line1[0][0]) * (line1[0][1] - line2[0][1]) - (line1[1][1] - line1[0][1]) * (
                 line1[0][0] - line2[0][0])) / denom
     if ub < 0 or ub > 1:
-        print("Lines out of range 2")
+        #print("Lines out of range 2")
         return None
     return [line1[0][0] + ua * (line1[1][0] - line1[0][0]), line1[0][1] + ua * (line1[1][1] - line1[0][1])]
+
+def sumLinePixels(img, pt1, pt2, testimg = None):
+    rating = 0
+    pointsList = list(zip(*skimage.draw.line(round(pt1[0]), round(pt1[1]), round(pt2[0]), round(pt2[1]))))
+    for x, y in pointsList:
+        with suppress(IndexError):
+            rating += img[y-1, x - 1]
+            rating += img[y, x - 1]
+            rating += img[y+1, x - 1]
+            rating += img[y-1, x]
+            rating += img[y, x]
+            rating += img[y+1, x]
+            rating += img[y-1, x + 1]
+            rating += img[y, x + 1]
+            rating += img[y, x + 1]
+            # if testimg is not None:
+            #     testimg[y, x] = img[y - 1, x - 1] / 2
+            #     testimg[y, x] = img[y, x - 1] / 2
+            #     testimg[y, x] = img[y + 1, x - 1] / 2
+            #     testimg[y, x] = img[y - 1, x] / 2
+            #     testimg[y, x] = img[y, x]
+            #     testimg[y, x] = img[y + 1, x] / 2
+            #     testimg[y, x] = img[y - 1, x + 1] / 2
+            #     testimg[y, x] = img[y, x + 1] / 2
+            #     testimg[y, x] = img[y, x + 1] / 2
+    return rating/len(pointsList), testimg
+
+def sumLinesPixels(img, line1, line2, debug, show):
+    innerImg = None
+    outerImg = None
+    if show:
+        innerImg = np.zeros(shape=img.shape, dtype=np.uint8)
+        outerImg = np.copy(innerImg)
+    midPnt = intersect(line1, line2)
+    if not midPnt: return None
+    inner1, innerImg = sumLinePixels(img, line1[0], midPnt, innerImg)
+    inner2, innerImg = sumLinePixels(img, line2[1], midPnt, innerImg)
+    outer1, outerImg = sumLinePixels(img, line2[0], midPnt, outerImg)
+    outer2, outerImg = sumLinePixels(img, line1[1], midPnt, outerImg)
+    innerScore = inner1 + inner2
+    outerScore = outer1 + outer2
+    if debug:
+        linesName = str(round(line1[0][0], 1)) + " " + str(round(line1[0][1], 1)) + " " + str(round(line1[1][0], 1)) + " " + str(round(line1[1][1], 1)) + " "\
+                    + str(round(line2[0][0], 1)) + " " + str(round(line2[0][1], 1)) + " " + str(round(line2[1][0], 1)) + " " + str(round(line2[1][1], 1))
+        print(linesName)
+        print(midPnt)
+        print("innerscore: " + str(innerScore))
+        print("outerscore: " + str(outerScore))
+        # cv.imshow("inner" + linesName, innerImg)
+        # cv.imshow("outer" + linesName, outerImg)
+        # cv.waitKey()
+    if innerScore > outerScore:
+        return [True, innerScore]
+    return [False, outerScore]
 
 def addBlurredExtendBorder(src,top,bottom,left,right):
     #blurred = cv.blur(src,(5,5))
@@ -125,135 +167,117 @@ def trimLine(pt1, pt2, maxX, maxY):
         pt2 = trimLongLine(pt2, pt1, maxX, maxY)
     return pt1, pt2
 
-
-def processLines(img, lines, axis, edge, debug, show):
-    drawImg = cv.cvtColor(np.copy(img), cv.COLOR_GRAY2BGR)
-    if show:
-        rejectImg = np.copy(drawImg)
-    maxLines = [None, None]
-    minLines = [None, None]
-    minMid = None
-    maxMid = None
-    offAxis = axis*-1+1
-    imgSize = (img.shape[1], img.shape[0])
-    if not edge:
-        maxEdge = round(DEFAULT_BORDER_TOLERANCE * imgSize[1])
-        minEdge = round(DEFAULT_BORDER_TOLERANCE * imgSize[1])
-    elif axis == 1:
-        minEdge = edge[0]
-        maxEdge = edge[1]
+def detectLines(img, threshold, side, debug, show):
+    #side: 0 = top, 1 = bottom, 2 = left, 3 = right
+    if side <= 1:
+        baseAngle = 0.5
+        axis = 1
+        offAxis = 0
     else:
-        minEdge = edge[2]
-        maxEdge = edge[3]
+        baseAngle = 1
+        axis = 0
+        offAxis = 1
+    if side % 2 == 0:
+        op = operator.lt
+    else:
+        op = operator.gt
+    if debug:
+        print("side: " + str(side))
 
-    if lines is not None:
-        for i in range(0, len(lines)):
-            rho = lines[i][0][0]
-            theta = lines[i][0][1]
-            a = math.cos(theta)
-            b = math.sin(theta)
-            x0 = a * rho
-            y0 = b * rho
-            pt1 = (Decimal(x0 + 10000 * (-b)), Decimal(y0 + 10000 * (a)))
-            pt2 = (Decimal(x0 - 10000 * (-b)), Decimal(y0 - 10000 * (a)))
+    while True:
+        lines = cv.HoughLines(img, 1, np.pi / 2880, round(threshold), None, 0, 0, np.pi * (baseAngle - ANGLE_TOLERANCE),
+                                  np.pi * (baseAngle + ANGLE_TOLERANCE))
+        if show:
+            allImg = cv.cvtColor(np.copy(img), cv.COLOR_GRAY2BGR)
+            proImg = np.copy(allImg)
+            drawProImg = False
+        maxCorner = None
+        minCorner = None
+        processedLines = []
+        prunedLines = []
+        highScore = None
+        corners = None
+        mid = None
+
+        if lines is not None:
+            for i in range(0, len(lines)):
+                rho = lines[i][0][0]
+                theta = lines[i][0][1]
+                a = math.cos(theta)
+                b = math.sin(theta)
+                x0 = a * rho
+                y0 = b * rho
+                pt1 = (Decimal(x0 + 10000 * (-b)), Decimal(y0 + 10000 * (a)))
+                pt2 = (Decimal(x0 - 10000 * (-b)), Decimal(y0 - 10000 * (a)))
+                pt1, pt2 = trimLine(pt1, pt2, img.shape[1], img.shape[0])
+                if pt1[offAxis] > pt2[offAxis]:
+                    buffer = pt1
+                    pt1 = pt2
+                    pt2 = buffer
+                if show:
+                    int1 = [int(pt1[0]), int(pt1[1])]
+                    int2 = [int(pt2[0]), int(pt2[1])]
+                    cv.line(allImg, int1, int2, angleToColour(), 1, cv.LINE_AA)
+                # if debug:
+                #     print("low point: " + str(pt1))
+                #     print("high point: " + str(pt2))
+                processedLines.append([pt1, pt2])
+                if minCorner is None or op(pt1[axis], processedLines[minCorner][0][axis]):
+                    minCorner = i
+                if maxCorner is None or op(pt2[axis], processedLines[maxCorner][1][axis]):
+                    maxCorner = i
+
+            if maxCorner == minCorner:
+                corners = processedLines[maxCorner]
+                mid = [(corners[0][0] + corners[1][0]) / 2, (corners[0][1] + corners[1][1]) / 2]
+            else:
+                minRange = (processedLines[minCorner][0][axis], processedLines[maxCorner][0][axis])
+                maxRange = (processedLines[maxCorner][1][axis], processedLines[minCorner][1][axis])
+                if debug:
+                    print("low-side range: " + str(minRange))
+                    print("high-side range: " + str(maxRange))
+                    print(processedLines)
+                for line in processedLines:
+                    if max(minRange) >= line[0][axis] >= min(minRange) and \
+                            max(maxRange) >= line[1][axis] >= min(maxRange):
+                        if show:
+                            int1 = [int(line[0][0]), int(line[0][1])]
+                            int2 = [int(line[1][0]), int(line[1][1])]
+                            cv.line(proImg, int1, int2, angleToColour(), 1, cv.LINE_AA)
+                            drawProImg = True
+                        prunedLines.append(line)
+                processedLines.sort(key=lambda prunedLines: prunedLines[0][axis])
+                for i in range(1, len(prunedLines)):
+                    for j in range(0, len(prunedLines)):
+                        if i > j:
+                            score = sumLinesPixels(img, prunedLines[i], prunedLines[j], show, debug)
+                            if score:
+                                if not highScore or score[1] > highScore[1]:
+                                    highScore = score + [i, j]
+
+                highI = prunedLines[highScore[2]]
+                highJ = prunedLines[highScore[3]]
+                if highScore[0]:
+                    if debug:
+                        print("Chose Inner for lines " + str(highI) + " " + str(highJ))
+                    corners = [highI[0], highJ[1]]
+                else:
+                    if debug:
+                        print("Chose Outer for lines " + str(highI) + " " + str(highJ))
+                    corners = [highJ[0], highI[1]]
+                mid = intersect(highI, highJ)
+        if corners and mid:
             if show:
-                int1 = [round(pt1[0]), round(pt1[1])]
-                int2 = [round(pt2[0]), round(pt2[1])]
-                cv.line(drawImg, int1, int2, angleToColour(), 1, cv.LINE_AA)
-            pt1, pt2 = trimLine(pt1, pt2, imgSize[0], imgSize[1])
-            if pt1[offAxis] > pt2[offAxis]:
-                buffer = pt1
-                pt1 = pt2
-                pt2 = buffer
-            if debug:
-                print(pt1)
-                print(pt2)
-                print(axis)
-                print(imgSize[axis] - maxEdge)
-                print(minEdge)
+                cv.imshow("all lines for side " + str(side), allImg)
+                if drawProImg:
+                    cv.imshow("possible lines for side " + str(side), proImg)
+            return corners, mid
+        threshold -= 20
+        if threshold <= 0:
+            return None, None
 
-            if pt1[axis] > imgSize[axis] - maxEdge and pt2[axis] > imgSize[axis] - maxEdge:
-                if not maxLines[0] or maxLines[0][0][axis] < pt1[axis]:
-                    maxLines = [(pt1, pt2), maxLines[1]]
-                if not maxLines[1] or maxLines[1][1][axis] < pt2[axis]:
-                    maxLines = [maxLines[0], (pt1, pt2)]
-
-            if pt1[axis] < minEdge and pt2[axis] < minEdge:
-                if not minLines[0] or minLines[0][0][axis] > pt1[axis]:
-                    minLines = [(pt1, pt2), minLines[1]]
-                if not minLines[1] or minLines[1][1][axis] > pt2[axis]:
-                    minLines = [minLines[0], (pt1, pt2)]
-    if maxLines[0] == None or maxLines[1] == None:
-        maxCorners = None
-    else:
-        if maxLines[0] == maxLines[1]:
-            maxCorners = list(maxLines[0])
-            maxMid = ((maxCorners[0][0]+maxCorners[1][0])/2, (maxCorners[0][1]+maxCorners[1][1])/2)
-        else:
-            maxMid = intersect(maxLines[0], maxLines[1])
-            innerLineScore = sumLinePixels(img, maxLines[0][0], maxMid) + sumLinePixels(img, maxLines[1][1], maxMid)
-            outerLineScore = sumLinePixels(img, maxLines[0][1], maxMid) + sumLinePixels(img, maxLines[1][0], maxMid)
-            if debug:
-                print("innerMaxscore: " + str(innerLineScore))
-                print("outerMaxscore: " + str(outerLineScore))
-            if innerLineScore >= outerLineScore:
-                if show:
-                    cv.line(rejectImg, [round(maxLines[0][1][0]), round(maxLines[0][1][1])],
-                            [round(maxMid[0]), round(maxMid[1])],angleToColour(), 1, cv.LINE_AA)
-                    cv.line(rejectImg, [round(maxLines[1][0][0]),round(maxLines[1][0][1])],
-                            [round(maxMid[0]), round(maxMid[1])],angleToColour(), 1, cv.LINE_AA)
-                maxCorners = [maxLines[0][0], maxLines[1][1]]
-            else:
-                if show:
-                    cv.line(rejectImg, [round(maxLines[0][0][0]), round(maxLines[0][0][1])],
-                            [round(maxMid[0]), round(maxMid[1])], angleToColour(), 1, cv.LINE_AA)
-                    cv.line(rejectImg, [round(maxLines[1][1][0]), round(maxLines[1][1][1])],
-                            [round(maxMid[0]), round(maxMid[1])], angleToColour(), 1, cv.LINE_AA)
-                maxCorners = [maxLines[0][1], maxLines[1][0]]
-            maxMid = [Decimal(imgSize[0] / 2), Decimal(imgSize[1] / 2)]
-            maxMid[axis] = intersect(maxLines[0], maxLines[1])[axis]
-        if maxCorners[0][offAxis] > maxCorners[1][offAxis]:
-            buffer = maxCorners[0]
-            maxCorners[0] = maxCorners[1]
-            maxCorners[1] = buffer
-
-    if minLines[0] == None or minLines[1] == None:
-        minCorners = None
-    else:
-        if minLines[0] == minLines[1]:
-            minCorners = list(minLines[0])
-            minMid = ((minCorners[0][0]+minCorners[1][0])/2, (minCorners[0][1]+minCorners[1][1])/2)
-        else:
-            minMid = intersect(minLines[0], minLines[1])
-            innerLineScore = sumLinePixels(img, minLines[0][0], minMid) + sumLinePixels(img, minLines[1][1], minMid)
-            outerLineScore = sumLinePixels(img, minLines[0][1], minMid) + sumLinePixels(img, minLines[1][0], minMid)
-            if debug:
-                print("innerMinscore: " + str(innerLineScore))
-                print("outerMinscore: " + str(outerLineScore))
-            if innerLineScore >= outerLineScore:
-                if show:
-                    cv.line(rejectImg, [round(minLines[0][1][0]), round(minLines[0][1][1])],
-                            [round(minMid[0]), round(minMid[1])],angleToColour(), 1, cv.LINE_AA)
-                    cv.line(rejectImg, [round(minLines[1][0][0]),round(minLines[1][0][1])],
-                            [round(minMid[0]), round(minMid[1])],angleToColour(), 1, cv.LINE_AA)
-                minCorners = [minLines[0][0], minLines[1][1]]
-            else:
-                if show:
-                    cv.line(rejectImg, [round(minLines[0][0][0]), round(minLines[0][0][1])],
-                            [round(minMid[0]), round(minMid[1])], angleToColour(), 1, cv.LINE_AA)
-                    cv.line(rejectImg, [round(minLines[1][1][0]), round(minLines[1][1][1])],
-                            [round(minMid[0]), round(minMid[1])], angleToColour(), 1, cv.LINE_AA)
-                minCorners = [minLines[0][1], minLines[1][0]]
-            minMid = [Decimal(imgSize[0] / 2), Decimal(imgSize[1] / 2)]
-            minMid[axis] = intersect(minLines[0], minLines[1])[axis]
-        if minCorners[0][offAxis] > minCorners[1][offAxis]:
-            buffer = minCorners[0]
-            minCorners[0] = minCorners[1]
-            minCorners[1] = buffer
-
-    if show:
-        cv.imshow("rejected lines from axis " + str(axis), rejectImg)
-    return drawImg, maxCorners, maxMid, minCorners, minMid
+def trimImage(img, fromTop, newBot, fromLeft, newRight):
+    return img[fromTop:newBot, fromLeft:newRight]
 
 def calculateOuterAndInnerPoint(pnt, middle, extraSpace):
     return [[pnt[0]+((pnt[0]-middle[0])*(extraSpace[0]*2)), pnt[1]+((pnt[1]-middle[1])*(extraSpace[1]*2))], pnt]
@@ -269,37 +293,36 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, mask, debug=False, 
         print('Clean Image at ' + cleanImg + ' Not Found, attempting with base image')
         clean = src
 
-    edges = cv.Canny(clean, 25, 500, True, 5)
-    cEdges = cv.cvtColor(edges, cv.COLOR_GRAY2BGR)
-
+    edges = cv.Canny(clean, 25, 860, True, 5)
+    if show:
+        cv.imshow("edges", edges)
+    if not edge:
+        edgeSize = round(DEFAULT_BORDER_TOLERANCE * src.shape[0])
+        edge = [edgeSize, edgeSize, edgeSize, edgeSize]
+    if debug:
+        print("edges " + str(edge))
     threshold = DEFAULT_H_THRESHOLD * src.shape[0]
-    if debug:
-        print("starting H threshold: "+ str(threshold))
-    while True:
-        horiLines = cv.HoughLines(edges, 1, np.pi / 2880, round(threshold), None, 0, 0, np.pi * (0.5 - ANGLE_TOLERANCE),
-                                  np.pi * (0.5 + ANGLE_TOLERANCE))
-        cdstH, lowerCorners, lowerMid, upperCorners, upperMid = processLines(edges, horiLines, 1, edge, debug, show)
-        if upperCorners and lowerCorners:
-            break
-        threshold -= 20
-        if threshold <= 0:
-            break
-    if debug:
-        print("H Threshold: " + str(round(threshold)))
+    upperCorners, upperMid = detectLines(trimImage(np.copy(edges), 0, edge[0], 0, src.shape[1]), threshold, 0, debug, show)
+    lowerCorners, lowerMid = detectLines(trimImage(np.copy(edges), src.shape[0]-edge[1], src.shape[0], 0, src.shape[1]), threshold, 1, debug,
+                                          show)
+
     threshold = DEFAULT_V_THRESHOLD * src.shape[1]
-    if debug:
-        print("starting V threshold: "+ str(threshold))
-    while True:
-        vertLines = cv.HoughLines(edges, 1, np.pi / 2880, round(threshold), None, 0, 0, np.pi * (1 - ANGLE_TOLERANCE),
-                                  np.pi * (1 + ANGLE_TOLERANCE))
-        cdstV, rightCorners, rightMid, leftCorners, leftMid = processLines(edges, vertLines, 0, edge, debug, show)
-        if rightCorners and leftCorners:
-            break
-        threshold -= 20
-        if threshold <= 0:
-            break
-    if debug:
-        print("V Threshold: " + str(round(threshold)))
+    leftCorners, leftMid = detectLines(trimImage(np.copy(edges), 0, src.shape[0], 0, edge[2]), threshold, 2, debug,
+                                          show)
+    rightCorners, rightMid = detectLines(
+        trimImage(np.copy(edges), 0, src.shape[0], src.shape[1] - edge[3], src.shape[1]), threshold, 3, debug,
+        show)
+
+    if not (upperCorners and lowerCorners and leftCorners and rightCorners):
+        print("error finding edges")
+        return
+
+    lowerCorners[0][1] += src.shape[0] - edge[1]
+    lowerCorners[1][1] += src.shape[0] - edge[1]
+    lowerMid[1] += src.shape[0] - edge[1]
+    rightCorners[0][0] += src.shape[1] - edge[3]
+    rightCorners[1][0] += src.shape[1] - edge[3]
+    rightMid[0] += src.shape[1] - edge[3]
 
     if not border:
         border = [0, 0, 0, 0]
@@ -319,16 +342,43 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, mask, debug=False, 
             print("lowerMid: " + str(lowerMid))
             print("leftMid: " + str(leftMid))
             print("rightMid: " + str(rightMid))
-        # testimg = cv.cvtColor(np.copy(edges), cv.COLOR_GRAY2BGR)
-        # cv.line(testimg, (round(upperCorners[1][0]), round(upperCorners[1][1])), (round(upperMid[0]), round(upperMid[1])), (0, 0, 255), 1, cv.LINE_AA)
-        # cv.line(testimg, (round(rightCorners[0][0]), round(rightCorners[0][1])),
-        #         (round(rightMid[0]), round(rightMid[1])), (0, 0, 255), 1, cv.LINE_AA)
-        # cv.imshow("found", testimg)
-        # cv.waitKey()
+
+
         upperLeft = intersect((upperCorners[0], upperMid), (leftCorners[0], leftMid))
         upperRight = intersect((upperCorners[1], upperMid), (rightCorners[0], rightMid))
         lowerLeft = intersect((lowerCorners[0], lowerMid), (leftCorners[1], leftMid))
         lowerRight = intersect((lowerCorners[1], lowerMid), (rightCorners[1], rightMid))
+
+        if not (upperLeft and upperRight and lowerLeft and lowerRight):
+            print("ERROR: Lines do not intersect")
+            print("UpperLeft: " + str(upperLeft))
+            print("UpperRight: " + str(upperRight))
+            print("LowerLeft: " + str(lowerLeft))
+            print("LowerRight: " + str(lowerRight))
+            if show:
+                edges = cv.cvtColor(edges, cv.COLOR_GRAY2BGR)
+                cv.line(edges, [round(upperCorners[0][0]), round(upperCorners[0][1])],
+                        [round(upperMid[0]), round(upperMid[1])], angleToColour(), 1, cv.LINE_AA)
+                cv.line(edges, [round(upperCorners[1][0]), round(upperCorners[1][1])],
+                        [round(upperMid[0]), round(upperMid[1])], angleToColour(), 1, cv.LINE_AA)
+                
+                cv.line(edges, [round(lowerCorners[0][0]), round(lowerCorners[0][1])],
+                        [round(lowerMid[0]), round(lowerMid[1])], angleToColour(), 1, cv.LINE_AA)
+                cv.line(edges, [round(lowerCorners[1][0]), round(lowerCorners[1][1])],
+                        [round(lowerMid[0]), round(lowerMid[1])], angleToColour(), 1, cv.LINE_AA)
+                
+                cv.line(edges, [round(leftCorners[0][0]), round(leftCorners[0][1])],
+                        [round(leftMid[0]), round(leftMid[1])], angleToColour(), 1, cv.LINE_AA)
+                cv.line(edges, [round(leftCorners[1][0]), round(leftCorners[1][1])],
+                        [round(leftMid[0]), round(leftMid[1])], angleToColour(), 1, cv.LINE_AA)
+                
+                cv.line(edges, [round(rightCorners[0][0]), round(rightCorners[0][1])],
+                        [round(rightMid[0]), round(rightMid[1])], angleToColour(), 1, cv.LINE_AA)
+                cv.line(edges, [round(rightCorners[1][0]), round(rightCorners[1][1])],
+                        [round(rightMid[0]), round(rightMid[1])], angleToColour(), 1, cv.LINE_AA)
+                cv.imshow("Detected Lines", edges)
+                cv.waitKey()
+            return None
 
         upperLeft = [upperLeft[0]+offsetX, upperLeft[1]+offsetY]
         upperRight = [upperRight[0]+offsetX, upperRight[1]+offsetY]
@@ -337,18 +387,6 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, mask, debug=False, 
         cardWidth = max(upperRight[0] - upperLeft[0], lowerRight[0] - lowerLeft[0])
         cardHeight = max(lowerRight[1] - upperRight[1], lowerLeft[1] - upperLeft[1])
 
-        if not (upperLeft and upperRight and lowerLeft and lowerRight):
-            print("ERROR: Lines do not intersect")
-            print("UpperLeft: " + str(upperLeft))
-            print("UpperRight: " + str(upperRight))
-            print("LowerLeft: " + str(lowerLeft))
-            print("LowerRight: " + str(lowerRight))
-
-            if show:
-                return src, edges, cEdges, cdstV, cdstH
-            else:
-                return src
-
         upperMid = [(upperLeft[0]+upperRight[0])/2, upperMid[1]+offsetY]
         lowerMid = [(lowerLeft[0]+lowerRight[0])/2, lowerMid[1]+offsetY]
         leftMid = [leftMid[0]+offsetX, (lowerLeft[1]+upperLeft[1])/2]
@@ -356,23 +394,25 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, mask, debug=False, 
         midPoint = [(leftMid[0]+rightMid[0])/2, (upperMid[1]+lowerMid[1])/2]
 
         if show:
-            cv.line(cEdges, [round(upperLeft[0]-offsetX), round(upperLeft[1]-offsetY)],
+            edges = cv.cvtColor(edges, cv.COLOR_GRAY2BGR)
+            cv.line(edges, [round(upperLeft[0]-offsetX), round(upperLeft[1]-offsetY)],
                     [round(upperMid[0]-offsetX), round(upperMid[1]-offsetY)], angleToColour(), 1, cv.LINE_AA)
-            cv.line(cEdges, [round(upperRight[0]-offsetX), round(upperRight[1]-offsetY)],
+            cv.line(edges, [round(upperRight[0]-offsetX), round(upperRight[1]-offsetY)],
                     [round(upperMid[0]-offsetX), round(upperMid[1]-offsetY)], angleToColour(), 1, cv.LINE_AA)
-            cv.line(cEdges, [round(upperLeft[0]-offsetX), round(upperLeft[1]-offsetY)],
+            cv.line(edges, [round(upperLeft[0]-offsetX), round(upperLeft[1]-offsetY)],
                     [round(leftMid[0]-offsetX), round(leftMid[1]-offsetY)], angleToColour(), 1, cv.LINE_AA)
-            cv.line(cEdges, [round(lowerLeft[0]-offsetX), round(lowerLeft[1]-offsetY)],
+            cv.line(edges, [round(lowerLeft[0]-offsetX), round(lowerLeft[1]-offsetY)],
                     [round(leftMid[0]-offsetX), round(leftMid[1]-offsetY)], angleToColour(), 1, cv.LINE_AA)
 
-            cv.line(cEdges, [round(lowerLeft[0]-offsetX), round(lowerLeft[1]-offsetY)],
+            cv.line(edges, [round(lowerLeft[0]-offsetX), round(lowerLeft[1]-offsetY)],
                     [round(lowerMid[0]-offsetX), round(lowerMid[1]-offsetY)], angleToColour(), 1, cv.LINE_AA)
-            cv.line(cEdges, [round(lowerRight[0]-offsetX), round(lowerRight[1]-offsetY)],
+            cv.line(edges, [round(lowerRight[0]-offsetX), round(lowerRight[1]-offsetY)],
                     [round(lowerMid[0]-offsetX), round(lowerMid[1]-offsetY)], angleToColour(), 1, cv.LINE_AA)
-            cv.line(cEdges, [round(lowerRight[0]-offsetX), round(lowerRight[1]-offsetY)],
+            cv.line(edges, [round(lowerRight[0]-offsetX), round(lowerRight[1]-offsetY)],
                     [round(rightMid[0]-offsetX), round(rightMid[1]-offsetY)], angleToColour(), 1, cv.LINE_AA)
-            cv.line(cEdges, [round(upperRight[0]-offsetX), round(upperRight[1]-offsetY)],
+            cv.line(edges, [round(upperRight[0]-offsetX), round(upperRight[1]-offsetY)],
                     [round(rightMid[0]-offsetX), round(rightMid[1]-offsetY)], angleToColour(), 1, cv.LINE_AA)
+            cv.imshow("4 main lines", edges)
 
         if debug:
             print("UpperLeft: " + str(upperLeft))
@@ -442,7 +482,7 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, mask, debug=False, 
         warped = img_as_ubyte(warp(bordered, tform, output_shape=(round(targetHeight+targetOffsetY*2), round(targetWidth+targetOffsetX*2))))
 
         if trim:
-            warped = warped[targetCard[0]:targetCard[1], targetCard[2]:targetCard[3]]
+            warped = trimImage(targetCard[0], targetCard[1], targetCard[2], targetCard[3])
 
         adjustNeeded = [round(round(targetCard[0] - border[0]) * Decimal(-1)),
                         round(round(targetCard[1] + border[1]) - warped.shape[0]),
@@ -458,13 +498,13 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, mask, debug=False, 
         if mask:
             warped = maskcorners.processMask(warped, mask)
         if show:
-            return warped, edges, cEdges, cdstV, cdstH
-        else:
-            return warped
+            cv.imshow("outputed", warped)
+            cv.waitKey()
+            return None
+        return warped
     else:
         print("ERROR: 4 lines not found in image " + baseImg)
-        if debug:
-            return src, edges, cEdges, cdstV, cdstH
+        return None
 
 
 def processMultiArg(arg, numNeeded):
@@ -538,18 +578,9 @@ def processArgs(inputText):
 
 def resolveImage(input, clean, output, border, trim, edge, res, mask, debug, show):
     print("processing " + input)
-    if show:
-        image, dst, cdst, cdstV, cdstH = processImage(input, clean, border, trim, edge, res, mask, debug, show)
-        cv.imshow("edges", dst)
-        cv.imshow("Horizontal Lines - Standard Hough Line Transform", cdstH)
-        cv.imshow("Vertical Lines - Standard Hough Line Transform", cdstV)
-        cv.imshow("4 main lines - Probabilistic Line Transform", cdst)
-        cv.imshow("outputed", image)
-        cv.waitKey()
-    else:
-        image = processImage(input, clean, border, trim, edge, res, mask, debug, show)
-        if image is not None:
-            cv.imwrite(output, image)
+    image = processImage(input, clean, border, trim, edge, res, mask, debug, show)
+    if image is not None:
+        cv.imwrite(output, image)
 
 def processFolder(input, clean, output, border, trim, edge, res, mask, debug, show):
     try:
