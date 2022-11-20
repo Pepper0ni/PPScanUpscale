@@ -13,8 +13,8 @@ from contextlib import suppress
 
 ANGLE_TOLERANCE = 0.01  # in radians
 DEFAULT_BORDER_TOLERANCE = 0.0327272727273  # multiplied by y coord
-DEFAULT_H_THRESHOLD = 0.15
-DEFAULT_V_THRESHOLD = 0.475
+DEFAULT_H_THRESHOLD = 0.1
+DEFAULT_V_THRESHOLD = 0.1
 
 
 def angleToColour():  # rad):
@@ -87,7 +87,7 @@ def sumLinesPixels(img, line1, line2, debug, show):
     innerImg = None
     outerImg = None
     if show:
-        innerImg = np.zeros(shape=img.shape, dtype=np.uint8)
+        innerImg = cv.cvtColor(np.copy(img), cv.COLOR_GRAY2BGR)#np.zeros(shape=[img.shape[0],img.shape[1],3], dtype=np.uint8)
         outerImg = np.copy(innerImg)
     midPnt = intersect(line1, line2)
     if not midPnt: return None
@@ -106,9 +106,17 @@ def sumLinesPixels(img, line1, line2, debug, show):
         print(midPnt)
         print("innerscore: " + str(innerScore))
         print("outerscore: " + str(outerScore))
-        # cv.imshow("inner" + linesName, innerImg)
-        # cv.imshow("outer" + linesName, outerImg)
-        # cv.waitKey()
+        cv.line(innerImg, [round(line1[0][0]), round(line1[0][1])],
+                    [round(midPnt[0]), round(midPnt[1])], angleToColour(), 1, cv.LINE_AA)
+        cv.line(innerImg, [round(line2[1][0]), round(line2[1][1])],
+                    [round(midPnt[0]), round(midPnt[1])], angleToColour(), 1, cv.LINE_AA)
+        cv.line(outerImg, [round(line1[1][0]), round(line1[1][1])],
+                    [round(midPnt[0]), round(midPnt[1])], angleToColour(), 1, cv.LINE_AA)
+        cv.line(outerImg, [round(line2[0][0]), round(line2[0][1])],
+                    [round(midPnt[0]), round(midPnt[1])], angleToColour(), 1, cv.LINE_AA)
+        #cv.imshow("inner" + linesName, innerImg)
+        #cv.imshow("outer" + linesName, outerImg)
+        #cv.waitKey()
     if innerScore > outerScore:
         return [True, innerScore]
     return [False, outerScore]
@@ -196,7 +204,7 @@ def detectLines(img, threshold, side, debug, show):
         print("side: " + str(side))
 
     while True:
-        lines = cv.HoughLines(img, 2, np.pi / 2880, round(threshold * 2), None, 0, 0,
+        lines = cv.HoughLines(img, 0.25, np.pi / 2880, round(threshold), None, 0, 0,
                               np.pi * (baseAngle - ANGLE_TOLERANCE),
                               np.pi * (baseAngle + ANGLE_TOLERANCE))
         if show:
@@ -220,7 +228,6 @@ def detectLines(img, threshold, side, debug, show):
                 b = math.sin(theta)
                 x0 = a * rho
                 y0 = b * rho
-                print([x0, y0])
                 pt1 = (Decimal(x0 + 10000 * (-b)), Decimal(y0 + 10000 * (a)))
                 pt2 = (Decimal(x0 - 10000 * (-b)), Decimal(y0 - 10000 * (a)))
                 pt1, pt2 = trimLine(pt1, pt2, img.shape[1], img.shape[0])
@@ -245,7 +252,6 @@ def detectLines(img, threshold, side, debug, show):
                     count += 1
 
             if maxCorner == minCorner:
-                print(processedLines[maxCorner])
                 corners = processedLines[maxCorner]
                 mid = [(corners[0][0] + corners[1][0]) / 2, (corners[0][1] + corners[1][1]) / 2]
             else:
@@ -256,7 +262,7 @@ def detectLines(img, threshold, side, debug, show):
                     print("high-side range: " + str(maxRange))
                     print(processedLines)
                 for line in processedLines:
-                    if max(minRange) >= line[0][axis] >= min(minRange) and \
+                    if max(minRange) >= line[0][axis] >= min(minRange) or \
                             max(maxRange) >= line[1][axis] >= min(maxRange):
                         if show:
                             int1 = [int(line[0][0]), int(line[0][1])]
@@ -265,23 +271,28 @@ def detectLines(img, threshold, side, debug, show):
                             drawProImg = True
                         prunedLines.append(line)
                 processedLines.sort(key=lambda prunedLines: prunedLines[0][axis])
-                for i in range(1, len(prunedLines)):
-                    for j in range(0, len(prunedLines)):
-                        if i > j:
-                            score = sumLinesPixels(img, prunedLines[i], prunedLines[j], show, debug)
-                            if score:
-                                if not highScore or score[1] > highScore[1]:
-                                    highScore = score + [i, j]
+                for i in range(0, len(prunedLines)):
+                    if 1 != 0:
+                        for j in range(0, len(prunedLines)):
+                            if i > j:
+                                score = sumLinesPixels(img, prunedLines[i], prunedLines[j], show, debug)
+                                if score:
+                                    if not highScore or score[1] > highScore[1]:
+                                        highScore = score + [i, j]
+                    score = sumLinePixels(img, prunedLines[i][0], prunedLines[i][1])
+                    if score:
+                        if not highScore or score[0] > highScore[1]:
+                            highScore = [True, score[0], i, i]
 
                 highI = prunedLines[highScore[2]]
                 highJ = prunedLines[highScore[3]]
                 if highScore[0]:
                     if debug:
-                        print("Chose Inner for lines " + str(highI) + " " + str(highJ))
+                        print("Chose Inner for lines " + str(highScore[2]) + " " + str(highScore[3]))
                     corners = [highI[0], highJ[1]]
                 else:
                     if debug:
-                        print("Chose Outer for lines " + str(highI) + " " + str(highJ))
+                        print("Chose Outer for lines " + str(highScore[2]) + " " + str(highScore[3]))
                     corners = [highJ[0], highI[1]]
                 mid = intersect(highI, highJ)
         if corners and mid:
@@ -297,7 +308,7 @@ def detectLines(img, threshold, side, debug, show):
 
 
 def trimImage(img, fromTop, newBot, fromLeft, newRight):
-    print((fromTop, newBot, fromLeft, newRight))
+    #print((fromTop, newBot, fromLeft, newRight))
     return img[fromTop:newBot, fromLeft:newRight]
 
 
@@ -309,7 +320,12 @@ def calculateOuterAndInnerPoint(pnt, middle, extraSpace):
 
 def processImage(baseImg, cleanImg, border, trim, edge, res, mask, debug=False, show=False):
     src = cv.imread(cv.samples.findFile(baseImg))
-    clean = cv.imread(cv.samples.findFile(cleanImg))
+    if cleanImg:
+        clean = cv.imread(cv.samples.findFile(cleanImg))
+    else:
+        clean = src
+    clean = cv.inRange(cv.cvtColor(clean, cv.COLOR_BGR2HSV), (21,180,226),(29,255,255))
+    clean = cv.medianBlur(clean, 3)
 
     if src is None:
         print('Base Image at ' + baseImg + ' Not Found, skipping')
@@ -317,23 +333,25 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, mask, debug=False, 
     if clean is None:
         print('Clean Image at ' + cleanImg + ' Not Found, attempting with base image')
         clean = src
-
+    if debug:
+        print("image size: " + str(src.shape))
     edges = cv.Canny(clean, 25, 1200, True, 5)
     if show:
+        cv.imshow("clean", clean)
         cv.imshow("edges", edges)
     if not edge:
         edgeSize = round(DEFAULT_BORDER_TOLERANCE * src.shape[0])
         edge = [edgeSize, edgeSize, edgeSize, edgeSize]
     if debug:
         print("edges " + str(edge))
-    threshold = DEFAULT_H_THRESHOLD * src.shape[0]
+    threshold = DEFAULT_H_THRESHOLD * src.shape[1]
     upperCorners, upperMid = detectLines(trimImage(np.copy(edges), 0, edge[0], 0, src.shape[1]), threshold, 0, debug,
                                          show)
     lowerCorners, lowerMid = detectLines(
         trimImage(np.copy(edges), src.shape[0] - edge[1], src.shape[0], 0, src.shape[1]), threshold, 1, debug,
         show)
 
-    threshold = DEFAULT_V_THRESHOLD * src.shape[1]
+    threshold = DEFAULT_V_THRESHOLD * src.shape[0]
     leftCorners, leftMid = detectLines(trimImage(np.copy(edges), 0, src.shape[0], 0, edge[2]), threshold, 2, debug,
                                        show)
     rightCorners, rightMid = detectLines(
@@ -567,7 +585,8 @@ def processArgs(inputText):
     parser = argparse.ArgumentParser(description=msg)
     parser.add_argument("-i", "--Input", help="Set Input" + inputText)
     parser.add_argument("-o", "--Output", help="Set Output" + inputText)
-    parser.add_argument("-c", "--Clean", help="Set Clean Images" + inputText)
+    parser.add_argument("-c", "--Clean", help="Set a secondary Clean " + inputText + "Image used for edge detection\n"
+                                                                                     "Default: None")
     parser.add_argument("-d", "--Debug", help="Enable debug prints default False" + inputText)
     parser.add_argument("-b", "--BorderSize",
                         help="Set the size of the 4 borders to trim to \n"
