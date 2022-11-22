@@ -21,6 +21,7 @@ ELEC_HUE_VAR = 1
 ELEC_SAT_VAR = 3
 ELEC_VAL_VAR = 1
 MIN_EDGE = 3
+CORNER_FIX_STREGNTH = 5
 
 def calcMidFromCorners(corners):
     return [(corners[0][0] + corners[1][0]) / 2, (corners[0][1] + corners[1][1]) / 2]
@@ -129,6 +130,9 @@ def sumLinesPixels(img, line1, line2, debug, show):
         return [True, innerScore]
     return [False, outerScore]
 
+def pasteImage(base, sprite, posX, posY):
+    base[round(posY):round(sprite.shape[0] + posY), round(posX):round(sprite.shape[1] + posX), :] = sprite
+    return base
 
 def addBlurredExtendBorder(src, top, bottom, left, right):
     # blurred = cv.blur(src,(5,5))
@@ -136,9 +140,18 @@ def addBlurredExtendBorder(src, top, bottom, left, right):
     blurred = cv.copyMakeBorder(blurred, round(top), round(bottom), round(left), round(right), cv.BORDER_REPLICATE)
     # cv.imshow("bordered", blurred)
 
-    blurred[round(top):round(src.shape[0] + top), round(left):round(src.shape[1] + left), :] = src
+    blurred = pasteImage(blurred, src, left, top)
     return blurred
 
+def fixBadCorners(src):
+    blurred = cv.copyMakeBorder(src, CORNER_FIX_STREGNTH, CORNER_FIX_STREGNTH, CORNER_FIX_STREGNTH, CORNER_FIX_STREGNTH, cv.BORDER_WRAP)
+    blurred = cv.medianBlur(blurred, CORNER_FIX_STREGNTH*2+1)
+    src = pasteImage(src, trimImage(blurred, CORNER_FIX_STREGNTH, CORNER_FIX_STREGNTH*3, CORNER_FIX_STREGNTH, CORNER_FIX_STREGNTH*3), 0, 0)
+    src = pasteImage(src, trimImage(blurred, blurred.shape[0]-CORNER_FIX_STREGNTH*3, blurred.shape[0]-CORNER_FIX_STREGNTH, CORNER_FIX_STREGNTH, CORNER_FIX_STREGNTH*3), 0, src.shape[0]-CORNER_FIX_STREGNTH*2)
+    #src = pasteImage(src, trimImage(blurred, blurred.shape[0] - 15, blurred.shape[0] - 5, 5, 15), 0, src.shape[0] - 10)
+    src = pasteImage(src, trimImage(blurred, CORNER_FIX_STREGNTH, CORNER_FIX_STREGNTH*3, blurred.shape[1]-CORNER_FIX_STREGNTH*3, blurred.shape[1]-CORNER_FIX_STREGNTH), src.shape[1]-CORNER_FIX_STREGNTH*2, 0)
+    src = pasteImage(src, trimImage(blurred, blurred.shape[0]-CORNER_FIX_STREGNTH*3, blurred.shape[0]-CORNER_FIX_STREGNTH, blurred.shape[1]-CORNER_FIX_STREGNTH*3, blurred.shape[1]-CORNER_FIX_STREGNTH), src.shape[1]-CORNER_FIX_STREGNTH*2, src.shape[0]-CORNER_FIX_STREGNTH*2)
+    return src
 
 def trimNegLine(pt1, pt2):
     disX = pt2[0] - pt1[0]
@@ -389,6 +402,7 @@ def calculateOuterAndInnerPoint(pnt, middle, extraSpace):
 
 def processImage(baseImg, cleanImg, border, trim, edge, res, mask, debug=False, show=False):
     src = cv.imread(cv.samples.findFile(baseImg))
+    fixBadCorners(src)
     if cleanImg:
         clean = cv.imread(cv.samples.findFile(cleanImg))
     else:
