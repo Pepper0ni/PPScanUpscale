@@ -33,7 +33,7 @@ for f in $(find ./dark -name "*.png" -type f); do
 done
 
 
-python3 ./main.py -i ./postprocess/ -o ./output/ -b 0.0390625,0.0390625,0.0456403269755,0.0456403269755 -r 734,1024 -m ./cardmask.png -e 60,50,50,50 #-c ./temp/
+python3 ./main.py -i ./postprocess/ -o ./output/ -b 0.0390625,0.0390625,0.0456403269755,0.0456403269755 -r 734,1024 -m ./cardmask.png -ma True
 
 #rm -r ./temp
 rm -r ./light

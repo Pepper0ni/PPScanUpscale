@@ -62,6 +62,9 @@ def on_high_V_thresh_trackbar(val):
     high_V = max(high_V, low_V + 1)
     cv.setTrackbarPos(high_V_name, window_detection_name, high_V)
 
+def trimImage(img, fromTop, newBot, fromLeft, newRight):
+    return img[fromTop:newBot, fromLeft:newRight]
+
 
 parser = argparse.ArgumentParser(description='Code for Thresholding Operations using inRange tutorial.')
 parser.add_argument("-i", "--Input", help="Set Input")
@@ -93,6 +96,9 @@ cv.createTrackbar(low_S_name, window_detection_name, low_S, max_value, on_low_S_
 cv.createTrackbar(high_S_name, window_detection_name, high_S, max_value, on_high_S_thresh_trackbar)
 cv.createTrackbar(low_V_name, window_detection_name, low_V, max_value, on_low_V_thresh_trackbar)
 cv.createTrackbar(high_V_name, window_detection_name, high_V, max_value, on_high_V_thresh_trackbar)
+halfImage = trimImage(hsvImage, round(hsvImage.shape[0]*0.65), hsvImage.shape[0], 0, hsvImage.shape[1])
+print(np.percentile(halfImage, 2, (0, 1)))
+
 while True:
 
     frame_threshold = cv.inRange(hsvImage, (low_H, low_S, low_V), (high_H, high_S, high_V))
