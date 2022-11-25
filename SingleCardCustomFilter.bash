@@ -18,8 +18,7 @@ if ! [ -f "$fp"/"$fn" ]; then
  if [ -f "$fl"/"$fn" ]; then
   gmic input "$fl"/"$fn" iain_nr_2019 2,1,-0.5,0.5,0.6,1,0,3,0,0,2,0,1,0,0 fx_LCE 200,2,0.08,0,0,0 afre_sharpenfft 15,1 output "$fp"/"$fn"
  elif [ -f "$fb"/"$fn" ]; then
-  gmic input "$fb"/"$fn" iain_nr_2019 0.5,1,-0.5,0.5,0.6,1,0,3,0,0,2,0,1,0,0 fx_LCE 200,2,0.04,0,0,0 afre_sharpenfft 15,1 output "$fp"/"$fn"
- fi
+  gmic input "$fb"/"$fn" iain_nr_2019 1,1,-0.5,0.5,0.6,1,0,3,0,0,2,0,1,0,0 fx_LCE 200,2,0.04,0,0,0 afre_sharpenfft 15,1 output "$fp"/"$fn"
  elif [ -f "$fd"/"$fn" ]; then
   gmic input "$fd"/"$fn" iain_nr_2019 0.05,1,-0.5,0.5,0.6,1,0,3,0,0,2,0,1,0,0 fx_LCE 200,2,0.04,0,0,0 afre_sharpenfft 15,1 output "$fp"/"$fn"
  fi
@@ -29,6 +28,6 @@ rm -r ./light
 rm -r ./dark
 rm -r ./balanced
 
-python3 ./main.py -i ./postprocess/"$fn" -o ./output/"$fn" -b 0.0390625,0.0390625,0.0456403269755,0.0456403269755 -r 734,1024 -m ./cardmask.png -e 60,50,50,50 #-c ./temp/"$fn"
+python3 ./main.py -i ./postprocess/"$fn" -o ./output/"$fn" -b 0.0390625,0.0390625,0.0456403269755,0.0456403269755 -r 734,1024 -m ./cardmask.png -e 60,54,54,54 -f True #-c ./temp/"$fn"
 
 

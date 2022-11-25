@@ -10,7 +10,7 @@ import skimage.draw
 import maskcorners
 import operator
 from contextlib import suppress
-import types
+import sys
 
 ANGLE_TOLERANCE = 0.01  # maximum variance from a straight line the line detector will accept. TODO find scale
 DEFAULT_BORDER_TOLERANCE = 0.0327272727273  # sets how far into an image to look for a border, multiplied by y coord
@@ -361,11 +361,21 @@ def getAdaptiveClean(hsvSrc):
 
     highPerc = np.percentile(borderBase, 99, (0, 1))
     lowPerc = np.percentile(borderBase, 1, (0, 1))
-    return cv.inRange(hsvSrc,(int(lowPerc[0] - ELEC_HUE_VAR), int(lowPerc[1] - ELEC_SAT_VAR), int(lowPerc[2] - ELEC_VAL_VAR)),
-                       (int((highPerc[0] + ELEC_HUE_VAR)), int(highPerc[1] + ELEC_SAT_VAR), int(highPerc[2] + ELEC_VAL_VAR)))
+    global lowHue
+    global hiHue
+    global lowSat
+    global hiSat
+    global lowVal
+    global hiVal
+    lowHue = int(lowPerc[0] - ELEC_HUE_VAR)
+    hiHue = int((highPerc[0] + ELEC_HUE_VAR))
+    lowSat = int(lowPerc[1] - ELEC_SAT_VAR)
+    hiSat = int(highPerc[1] + ELEC_SAT_VAR)
+    lowVal = int(lowPerc[2] - ELEC_VAL_VAR)
+    hiVal = int(highPerc[2] + ELEC_VAL_VAR)
+    return cv.inRange(hsvSrc, (lowHue, lowSat, lowVal), (hiHue, hiSat, hiVal))
 
 def trimImage(img, fromTop, newBot, fromLeft, newRight):
-    #print((fromTop, newBot, fromLeft, newRight))
     return img[fromTop:newBot, fromLeft:newRight]
 
 
@@ -452,6 +462,53 @@ def BRYcallbackTrackbar(val):
     global posDict
     posDict["BRY"] = val
 
+def lowHueTrackbar(val):
+    global lowHue
+    global hiHue
+    lowHue = val
+    lowHue = min(hiHue - 1, lowHue)
+    cv.setTrackbarPos("LowHue", TRACKBAR_WINDOW_NAME, lowHue)
+
+
+def hiHueTrackbar(val):
+    global lowHue
+    global hiHue
+    hiHue = val
+    hiHue = max(hiHue, lowHue + 1)
+    cv.setTrackbarPos("hiHue", TRACKBAR_WINDOW_NAME, hiHue)
+
+
+def lowSatTrackbar(val):
+    global lowSat
+    global hiSat
+    lowSat = val
+    lowSat = min(hiSat - 1, lowSat)
+    cv.setTrackbarPos("LowSat", TRACKBAR_WINDOW_NAME, lowSat)
+
+
+def hiSatTrackbar(val):
+    global lowSat
+    global hiSat
+    hiSat = val
+    hiSat = max(hiSat, lowSat + 1)
+    cv.setTrackbarPos("hiSat", TRACKBAR_WINDOW_NAME, hiSat)
+
+
+def lowValTrackbar(val):
+    global lowVal
+    global hiVal
+    lowVal = val
+    lowVal = min(hiVal - 1, lowVal)
+    cv.setTrackbarPos("lowVal", TRACKBAR_WINDOW_NAME, lowVal)
+
+
+def hiValTrackbar(val):
+    global lowVal
+    global hiVal
+    hiVal = val
+    hiVal = max(hiVal, lowVal + 1)
+    cv.setTrackbarPos("hiVal", TRACKBAR_WINDOW_NAME, hiVal)
+
 def toggleLines(a,b):
     global lineTog
     if lineTog:
@@ -460,8 +517,15 @@ def toggleLines(a,b):
         lineTog = True
 
 declared = False
+lowHue = 0
+hiHue = 180
+lowSat = 0
+hiSat = 255
+lowVal = 0
+hiVal = 255
 
-def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, debug=False, show=False):
+def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, filter, debug=False, show=False):
+    global declared
     src = cv.imread(cv.samples.findFile(baseImg))
     if src is None:
         print('Base Image at ' + baseImg + ' Not Found, skipping')
@@ -470,7 +534,6 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, debug
     if manual:
         cv.namedWindow(TRACKBAR_WINDOW_NAME)
         global posDict
-        global declared
         if not declared:
             posDict = {"TLX": 0, "TLY": 0, "TMX": round(src.shape[1]/2), "TMY": 0, "TRX": src.shape[1], "TRY": 0, "MLX": 0,
                        "MLY": round(src.shape[0]/2), "MRX": src.shape[1], "MRY": round(src.shape[0]/2), "BLX": 0,
@@ -501,8 +564,6 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, debug
             lowLeft = [Decimal(posDict["BLX"]), Decimal(posDict["BLY"])]
             lowMid = [Decimal(posDict["BMX"]), Decimal(posDict["BMY"])]
             lowRight = [Decimal(posDict["BRX"]), Decimal(posDict["BRY"])]
-            
-        
     else:
         if cleanImg:
             clean = cv.imread(cv.samples.findFile(cleanImg))
@@ -514,6 +575,12 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, debug
             clean = src
         if debug:
             print("image size: " + str(src.shape))
+        global lowHue
+        global hiHue
+        global lowSat
+        global hiSat
+        global lowVal
+        global hiVal
 
         hsvClean = cv.cvtColor(clean, cv.COLOR_BGR2HSV)
         elecCheck = cv.inRange(hsvClean, (20, 70, 0), (30, 255, 255))
@@ -525,7 +592,37 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, debug
         if electric:
             clean = getAdaptiveClean(hsvClean)
         else:
-            clean = cv.inRange(hsvClean, (20, 120, 190), (30, 255, 255))
+            lowHue = 20
+            hiHue = 30
+            lowSat = 120
+            hiSat = 255
+            lowVal = 190
+            hiVal = 255
+            clean = cv.inRange(hsvClean, (lowHue, lowSat, lowVal), (hiHue, hiSat, hiVal))
+
+        if filter:
+            cv.namedWindow(TRACKBAR_WINDOW_NAME)
+            if not declared:
+                cv.createTrackbar("hiHue", TRACKBAR_WINDOW_NAME, hiHue, 180, hiHueTrackbar)
+                cv.createTrackbar("LowHue", TRACKBAR_WINDOW_NAME, lowHue, 255, lowHueTrackbar)
+                cv.createTrackbar("HiSat", TRACKBAR_WINDOW_NAME, hiSat, 255, hiSatTrackbar)
+                cv.createTrackbar("LoSat", TRACKBAR_WINDOW_NAME, lowSat, 255, lowSatTrackbar)
+                cv.createTrackbar("HiVal", TRACKBAR_WINDOW_NAME, hiVal, 255, hiValTrackbar)
+                cv.createTrackbar("LoVal", TRACKBAR_WINDOW_NAME, lowVal, 255, lowValTrackbar)
+                cv.createButton("Toggle Lines", toggleLines)
+                cv.namedWindow("manual preview", cv.WINDOW_NORMAL)
+                declared = True
+            blank = np.zeros(shape=[3, 600], dtype=np.uint8)
+
+            while True:
+                clean = cv.inRange(hsvClean, (lowHue, lowSat, lowVal), (hiHue, hiSat, hiVal))
+                preview = cv.medianBlur(clean, 3)
+                cv.imshow(TRACKBAR_WINDOW_NAME, blank)
+                cv.imshow("manual preview", preview)
+                key = cv.waitKey(30)
+                if key == ord('q') or key == 27:
+                    break
+                    
         clean = cv.medianBlur(clean, 3)
 
         edges = cv.Canny(clean, 25, 1200, True, 5)
@@ -616,6 +713,10 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, debug
     offsetX = Decimal(round(src.shape[0] * extraSpace[0]))
     offsetY = Decimal(round(src.shape[1] * extraSpace[1]))
 
+    if show and not manual:
+        edges = drawBox(cv.cvtColor(edges, cv.COLOR_GRAY2BGR), upLeft, upMid, upRight, leftMid, rightMid, lowLeft, lowMid, lowRight)
+        cv.imshow("4 main lines", edges)
+
     upLeft = [upLeft[0] + offsetX, upLeft[1] + offsetY]
     upRight = [upRight[0] + offsetX, upRight[1] + offsetY]
     lowLeft = [lowLeft[0] + offsetX, lowLeft[1] + offsetY]
@@ -629,9 +730,7 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, debug
     rightMid = [rightMid[0] + offsetX, (lowRight[1] + upRight[1]) / 2]
     midPoint = [(leftMid[0] + rightMid[0]) / 2, (upMid[1] + lowMid[1]) / 2]
 
-    if show and not manual:
-        edges = drawBox(cv.cvtColor(edges, cv.COLOR_GRAY2BGR), upLeft, upMid, upRight, leftMid, rightMid, lowLeft, lowMid, lowRight)
-        cv.imshow("4 main lines", edges)
+
 
     if debug:
         print("UpperLeft: " + str(upLeft))
@@ -753,6 +852,7 @@ def processArgs(inputText):
     res = [734, 1024]
     mask = None
     manual = False
+    filter = False
 
     msg = "Improves old pokemon card scans"
     parser = argparse.ArgumentParser(description=msg)
@@ -776,6 +876,7 @@ def processArgs(inputText):
     parser.add_argument("-m", "--Mask", help="Mask the card using the provided mask.\n"
                                              "good for rounded corners.")
     parser.add_argument("-ma", "--Manual", help="Detect the edges manually. default: False")
+    parser.add_argument("-f", "--Filter", help="Bring up the filter menu to customise the filter used. default: False")
 
     args = parser.parse_args()
 
@@ -801,17 +902,19 @@ def processArgs(inputText):
         mask = args.Mask
     if args.Manual:
         manual = args.Manual
-    return input, clean, output, border, trim, edge, res, mask, manual, debug, show
+    if args.Filter:
+        filter = args.Filter
+    return input, clean, output, border, trim, edge, res, mask, manual, filter, debug, show
 
 
-def resolveImage(input, clean, output, border, trim, edge, res, mask, manual, debug, show):
+def resolveImage(input, clean, output, border, trim, edge, res, mask, manual, filter, debug, show):
     print("processing " + input)
-    image = processImage(input, clean, border, trim, edge, res, mask, manual, debug, show)
+    image = processImage(input, clean, border, trim, edge, res, mask, manual, filter, debug, show)
     if image is not None:
         cv.imwrite(output, image)
 
 
-def processFolder(input, clean, output, border, trim, edge, res, mask, manual, debug, show):
+def processFolder(input, clean, output, border, trim, edge, res, mask, manual, filter, debug, show):
     try:
         os.mkdir(output)
     except FileExistsError:
@@ -824,19 +927,19 @@ def processFolder(input, clean, output, border, trim, edge, res, mask, manual, d
             if clean:
                 cleanPath = os.path.join(clean, entry.name)
             if os.path.isfile(inputPath) and entry.name != "Place Images Here":
-                resolveImage(inputPath, cleanPath, outputPath, border, trim, edge, res, mask, manual, debug, show)
+                resolveImage(inputPath, cleanPath, outputPath, border, trim, edge, res, mask, manual, filter, debug, show)
             elif os.path.isdir(inputPath):
-                processFolder(inputPath, cleanPath, outputPath, border, trim, edge, res, mask, manual, debug, show)
+                processFolder(inputPath, cleanPath, outputPath, border, trim, edge, res, mask, manual, filter, debug, show)
 
 
 def main():
-    input, clean, output, border, trim, edge, res, mask, manual, debug, show = processArgs("folder")
+    input, clean, output, border, trim, edge, res, mask, manual, filter, debug, show = processArgs("folder")
     if not input:
         input = os.path.join(os.getcwd(), "input")
     if os.path.isfile(input):
-        resolveImage(input, clean, output, border, trim, edge, res, mask, manual, debug, show)
+        resolveImage(input, clean, output, border, trim, edge, res, mask, manual, filter, debug, show)
     elif os.path.isdir(input):
-        processFolder(input, clean, output, border, trim, edge, res, mask, manual, debug, show)
+        processFolder(input, clean, output, border, trim, edge, res, mask, manual, filter, debug, show)
     else:
         print("Input file not found.")
 
