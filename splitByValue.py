@@ -77,9 +77,9 @@ def processFolder(input, dark, balanced, light):
         for entry in entries:
             inputPath = os.path.join(input, entry.name)
             lightPath = os.path.join(light, entry.name)
-            balancedPath = os.path.join(light, entry.name)
+            balancedPath = os.path.join(balanced, entry.name)
             darkPath = os.path.join(dark, entry.name)
-            if os.path.isfile(inputPath) and entry.name != "Place Images Here":
+            if os.path.isfile(inputPath):
                 resolveImage(inputPath, darkPath, balancedPath, lightPath)
             elif os.path.isdir(inputPath):
                 processFolder(inputPath, darkPath, balancedPath, lightPath)

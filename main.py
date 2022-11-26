@@ -915,10 +915,8 @@ def resolveImage(input, clean, output, border, trim, edge, res, mask, manual, fi
 
 
 def processFolder(input, clean, output, border, trim, edge, res, mask, manual, filter, debug, show):
-    try:
+    with suppress(FileExistsError):
         os.mkdir(output)
-    except FileExistsError:
-        pass
     with os.scandir(input) as entries:
         for entry in entries:
             cleanPath = None
