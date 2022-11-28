@@ -10,9 +10,10 @@ import skimage.draw
 import maskcorners
 import operator
 from contextlib import suppress
-import sys
+import taskbarFuncs
+from skimage.filters import unsharp_mask
 
-ANGLE_TOLERANCE = 0.01  # maximum variance from a straight line the line detector will accept. TODO find scale
+ANGLE_TOLERANCE = 0.0314  # maximum variance from a straight line the line detector will accept in radians
 DEFAULT_BORDER_TOLERANCE = 0.0327272727273  # sets how far into an image to look for a border, multiplied by y coord
 DEFAULT_H_THRESHOLD = 0.1 # sets how strict the horizontal line detector is, multiplied by X coord
 DEFAULT_V_THRESHOLD = 0.1 # sets how strict the verticle line detector is, multiplied by y coord
@@ -24,7 +25,13 @@ ELEC_SAT_VAR = 3 #sets the variance in saturation for the adaptive border detect
 ELEC_VAL_VAR = 1 #sets the variance in value for the adaptive border detection to accept
 CORNER_FIX_STREGNTH = 5 #sets how large an area, and how strong a blur, to use for the corner fixing
 lineTog = True
-TRACKBAR_WINDOW_NAME = "Manual point set"
+
+def sharpen(src, ksize, amount, iter):
+    hsvSrc = cv.cvtColor(src, cv.COLOR_BGR2HSV_FULL)
+    h, s, v = cv.split(hsvSrc)
+    for _ in range(iter):
+        v = img_as_ubyte(unsharp_mask(v, ksize, amount))
+    return  cv.cvtColor(cv.merge([h, s, v]), cv.COLOR_HSV2BGR_FULL)
 
 
 def getMidpoint(line): #get the midpoint of a line
@@ -80,9 +87,9 @@ def sumLinePixels(img, pt1, pt2, testImg=None): #sum the number of lit pixels on
 def sumLinesPixels(img, line1, line2, debug, show): #sum the lit pixels on each combonation of 2 intersecting lines and return the highest
     innerImg = None
     outerImg = None
-    if show:
-        innerImg = cv.cvtColor(np.copy(img), cv.COLOR_GRAY2BGR)#np.zeros(shape=[img.shape[0],img.shape[1],3], dtype=np.uint8)
-        outerImg = np.copy(innerImg)
+    #if show:
+        #innerImg = cv.cvtColor(np.copy(img), cv.COLOR_GRAY2BGR)#np.zeros(shape=[img.shape[0],img.shape[1],3], dtype=np.uint8)
+        #outerImg = np.copy(innerImg)
     mid = intersect(line1, line2)
     if not mid: return None
     inner1, innerImg = sumLinePixels(img, line1[0], mid, innerImg)
@@ -100,8 +107,9 @@ def sumLinesPixels(img, line1, line2, debug, show): #sum the lit pixels on each 
         print(mid)
         print("innerscore: " + str(innerScore))
         print("outerscore: " + str(outerScore))
-        innerImg = drawLineWithMid(img, line1[0], line2[1], mid)
-        outerImg = drawLineWithMid(img, line1[1], line2[0], mid)
+    #if show:
+        #innerImg = drawLineWithMid(img, line1[0], line2[1], mid)
+        #outerImg = drawLineWithMid(img, line1[1], line2[0], mid)
         #cv.imshow("inner" + linesName, innerImg)
         #cv.imshow("outer" + linesName, outerImg)
         #cv.waitKey()
@@ -184,11 +192,11 @@ def trimLine(pt1, pt2, maxX, maxY): #trim a line on both ends to limit it to the
 def detectLines(img, threshold, side, debug, show): #find the 8-point lines in an edge detected image and find the best one
     # side: 0 = top, 1 = bottom, 2 = left, 3 = right
     if side <= 1: #set the angle limitation and correct axis for the side
-        baseAngle = 0.5
+        baseAngle = np.pi * 0.5
         axis = 1
         offAxis = 0
     else:
-        baseAngle = 1
+        baseAngle = np.pi * 1
         axis = 0
         offAxis = 1
     if side % 2 == 0: #set whether we are looking for the highest or lowest lines, based on side
@@ -199,8 +207,8 @@ def detectLines(img, threshold, side, debug, show): #find the 8-point lines in a
         print("side: " + str(side))
 
     lines = cv.HoughLines(img, 0.25, np.pi / 2880, round(threshold), None, 0, 0,
-                          np.pi * (baseAngle - ANGLE_TOLERANCE),
-                          np.pi * (baseAngle + ANGLE_TOLERANCE))
+                         baseAngle - ANGLE_TOLERANCE,
+                         baseAngle + ANGLE_TOLERANCE) #get lines
     if show:
         allImg = cv.cvtColor(np.copy(img), cv.COLOR_GRAY2BGR)
         proImg = np.copy(allImg)
@@ -224,8 +232,8 @@ def detectLines(img, threshold, side, debug, show): #find the 8-point lines in a
             y0 = b * rho
             pt1 = (Decimal(x0 + 10000 * (-b)), Decimal(y0 + 10000 * (a)))
             pt2 = (Decimal(x0 - 10000 * (-b)), Decimal(y0 - 10000 * (a)))
-            pt1, pt2 = trimLine(pt1, pt2, img.shape[1], img.shape[0])
-            if pt1[offAxis] > pt2[offAxis]:
+            pt1, pt2 = trimLine(pt1, pt2, img.shape[1], img.shape[0]) #get line in cartesean coords and limit it to the bounds of the image
+            if pt1[offAxis] > pt2[offAxis]: #sort the points based on the axis not being tested
                 buffer = pt1
                 pt1 = pt2
                 pt2 = buffer
@@ -237,9 +245,9 @@ def detectLines(img, threshold, side, debug, show): #find the 8-point lines in a
             #     print("low point: " + str(pt1))
             #     print("high point: " + str(pt2))
             if (img.shape[axis] == pt1[offAxis] or pt1[offAxis] == 0) and \
-                    (img.shape[axis] == pt2[offAxis] or pt2[offAxis] == 0):
+                    (img.shape[axis] == pt2[offAxis] or pt2[offAxis] == 0): #check if both points touch the far ends of the image, reject if they don't
                 processedLines.append([pt1, pt2])
-                if minCorner is None or op(pt1[axis], processedLines[minCorner][0][axis]):
+                if minCorner is None or op(pt1[axis], processedLines[minCorner][0][axis]): #keep track of the line furthest towards the card edge on each side
                     minCorner = count
                 if maxCorner is None or op(pt2[axis], processedLines[maxCorner][1][axis]):
                     maxCorner = count
@@ -250,17 +258,17 @@ def detectLines(img, threshold, side, debug, show): #find the 8-point lines in a
             print("minCorner: " + str(minCorner))
             print("maxCorner: " + str(maxCorner))
         if len(processedLines) > 0:
-            if maxCorner == minCorner:
+            if maxCorner == minCorner: #if the furthest out line on each side is the same, use that line.
                 corners = processedLines[maxCorner]
                 mid = getMidpoint(corners)
-            else:
-                minRange = (processedLines[minCorner][0][axis], processedLines[maxCorner][0][axis])
+            else: #otherwise test each line combonation to find the one that matches the true line the most
+                minRange = (processedLines[minCorner][0][axis], processedLines[maxCorner][0][axis]) #filter out lines not within the 2 furthest out lines
                 maxRange = (processedLines[maxCorner][1][axis], processedLines[minCorner][1][axis])
                 if debug:
                     print("low-side range: " + str(minRange))
                     print("high-side range: " + str(maxRange))
                     print(processedLines)
-                for line in processedLines:
+                for line in processedLines: #filter out lines not within the 2 furthest out lines
                     if max(minRange) >= line[0][axis] >= min(minRange) or \
                             max(maxRange) >= line[1][axis] >= min(maxRange):
                         if show:
@@ -274,23 +282,23 @@ def detectLines(img, threshold, side, debug, show): #find the 8-point lines in a
                     if 1 != 0:
                         for j in range(0, len(prunedLines)):
                             if i > j:
-                                score = sumLinesPixels(img, prunedLines[i], prunedLines[j], show, debug)
+                                score = sumLinesPixels(img, prunedLines[i], prunedLines[j], show, debug) #get the amount of each line that matches
                                 if score:
                                     if not highScore or score[1] > highScore[1]:
-                                        highScore = score + [i, j]
-                    score = sumLinePixels(img, prunedLines[i][0], prunedLines[i][1])
+                                        highScore = score + [i, j] #save the best line and if it's inwards or outwards
+                    score = sumLinePixels(img, prunedLines[i][0], prunedLines[i][1]) #check single lines too
                     if debug:
                         print("score for solo line: " + str(i) + " " + str(score[0]))
                     if score:
                         if not highScore or score[0] > highScore[1]:
                             highScore = [True, score[0], i, i]
-                if highScore[2] == highScore[3]:
+                if highScore[2] == highScore[3]: #if a single line is best, use it
                     if debug:
                         print("Chose line " + str(highScore[2]))
                     corners = prunedLines[highScore[2]]
                     mid = getMidpoint(corners)
                 else:
-                    highI = prunedLines[highScore[2]]
+                    highI = prunedLines[highScore[2]] #otherwise use a combonation of 2 lines to find the best, storing the intersection as the mid point
                     highJ = prunedLines[highScore[3]]
                     if highScore[0]:
                         if debug:
@@ -309,19 +317,16 @@ def detectLines(img, threshold, side, debug, show): #find the 8-point lines in a
             if drawProImg:
                 cv.imshow("possible lines for side " + str(side), proImg)
         return corners, mid
-    # threshold -= 20
-    # print("looping: " + str(threshold))
-    # if threshold <= 0:
     return None, None
 
-def correctMid(mid, midAxis, minCorner, maxCorner, ownCorners):
+def correctMid(mid, midAxis, minCorner, maxCorner, ownCorners): #check if the midpoint is outside the border, change to a single line if it is
     if mid[midAxis] <= minCorner or mid[midAxis] >= maxCorner:
         print("mid out of bounds, attempting to correct")
         return getMidpoint(ownCorners)
     return mid
 
-def getPoints(edges, edge, debug, show):
-    threshold = DEFAULT_H_THRESHOLD * edges.shape[1]
+def getPoints(edges, edge, debug, show): #get the 9 points of the border
+    threshold = DEFAULT_H_THRESHOLD * edges.shape[1] #set line threshold based on image resolution
     upCorners, upMid = detectLines(trimImage(np.copy(edges), MIN_LINE_EDGE, edge[0], 0, edges.shape[1]), threshold, 0, debug, show)
     lowCorners, lowMid = detectLines(trimImage(np.copy(edges), edges.shape[0] - edge[1], edges.shape[0] - MIN_LINE_EDGE, 0, edges.shape[1]), threshold, 1, debug,
                                      show)
@@ -333,7 +338,7 @@ def getPoints(edges, edge, debug, show):
         trimImage(np.copy(edges), 0, edges.shape[0], edges.shape[1] - edge[3], edges.shape[1] - MIN_LINE_EDGE), threshold, 3, debug,
         show)
 
-    if upCorners and lowCorners and leftCorners and rightCorners:
+    if upCorners and lowCorners and leftCorners and rightCorners: #correct the corners to match the amounts of image chopped of when testing
         upCorners[0][1] += MIN_LINE_EDGE
         upCorners[1][1] += MIN_LINE_EDGE
         upMid[1] += MIN_LINE_EDGE
@@ -349,221 +354,85 @@ def getPoints(edges, edge, debug, show):
 
     return upCorners, upMid, lowCorners, lowMid, leftCorners, leftMid, rightCorners, rightMid
 
-def getAdaptiveClean(hsvSrc):
-    borderBase = cv.vconcat([trimImage(hsvSrc, MIN_ELEC_AVG_RANGE, MAX_ELEC_AVG_RANGE, MIN_ELEC_AVG_RANGE, hsvSrc.shape[1] - MIN_ELEC_AVG_RANGE),
-                             trimImage(hsvSrc, hsvSrc.shape[0] - MAX_ELEC_AVG_RANGE, hsvSrc.shape[0] - MIN_ELEC_AVG_RANGE, MIN_ELEC_AVG_RANGE,hsvSrc.shape[1] - MIN_ELEC_AVG_RANGE)])
+def filterImage(hsvClean, adaptive, show):
+    if adaptive: #an apative method that tried to take a chunk of the border and make a filter based on it.
+        borderBase = cv.vconcat([trimImage(hsvClean, MIN_ELEC_AVG_RANGE, MAX_ELEC_AVG_RANGE, MIN_ELEC_AVG_RANGE,
+                                           hsvClean.shape[1] - MIN_ELEC_AVG_RANGE),
+                                 trimImage(hsvClean, hsvClean.shape[0] - MAX_ELEC_AVG_RANGE,
+                                           hsvClean.shape[0] - MIN_ELEC_AVG_RANGE, MIN_ELEC_AVG_RANGE,
+                                           hsvClean.shape[1] - MIN_ELEC_AVG_RANGE)])
 
-    borderBaseV = cv.hconcat([trimImage(hsvSrc, MIN_ELEC_AVG_RANGE, hsvSrc.shape[0] - MIN_ELEC_AVG_RANGE, MIN_ELEC_AVG_RANGE, MAX_ELEC_AVG_RANGE),
-                              trimImage(hsvSrc, MIN_ELEC_AVG_RANGE, hsvSrc.shape[0] - MIN_ELEC_AVG_RANGE, hsvSrc.shape[1] - MAX_ELEC_AVG_RANGE, hsvSrc.shape[1] - MIN_ELEC_AVG_RANGE)])
-    borderBaseV = cv.transpose(borderBaseV)
+        borderBaseV = cv.hconcat([trimImage(hsvClean, MIN_ELEC_AVG_RANGE, hsvClean.shape[0] - MIN_ELEC_AVG_RANGE,
+                                            MIN_ELEC_AVG_RANGE, MAX_ELEC_AVG_RANGE),
+                                  trimImage(hsvClean, MIN_ELEC_AVG_RANGE, hsvClean.shape[0] - MIN_ELEC_AVG_RANGE,
+                                            hsvClean.shape[1] - MAX_ELEC_AVG_RANGE,
+                                            hsvClean.shape[1] - MIN_ELEC_AVG_RANGE)])
+        borderBaseV = cv.transpose(borderBaseV)  # make an image from the assumed borders of the image
 
-    borderBase = cv.hconcat([borderBase, borderBaseV])
+        borderBase = cv.hconcat([borderBase, borderBaseV])
 
-    highPerc = np.percentile(borderBase, 99, (0, 1))
-    lowPerc = np.percentile(borderBase, 1, (0, 1))
-    global lowHue
-    global hiHue
-    global lowSat
-    global hiSat
-    global lowVal
-    global hiVal
-    lowHue = int(lowPerc[0] - ELEC_HUE_VAR)
-    hiHue = int((highPerc[0] + ELEC_HUE_VAR))
-    lowSat = int(lowPerc[1] - ELEC_SAT_VAR)
-    hiSat = int(highPerc[1] + ELEC_SAT_VAR)
-    lowVal = int(lowPerc[2] - ELEC_VAL_VAR)
-    hiVal = int(highPerc[2] + ELEC_VAL_VAR)
-    return cv.inRange(hsvSrc, (lowHue, lowSat, lowVal), (hiHue, hiSat, hiVal))
+        highPerc = np.percentile(borderBase, 99,
+                                 (0, 1))  # get the range of the image's HSV values, ignoring 1% outliers)
+        lowPerc = np.percentile(borderBase, 1, (0, 1))
+        taskbarFuncs.lowHue = int(lowPerc[0] - ELEC_HUE_VAR)
+        taskbarFuncs.hiHue = int((highPerc[0] + ELEC_HUE_VAR))
+        taskbarFuncs.lowSat = int(lowPerc[1] - ELEC_SAT_VAR)
+        taskbarFuncs.hiSat = int(highPerc[1] + ELEC_SAT_VAR)
+        taskbarFuncs.lowVal = int(lowPerc[2] - ELEC_VAL_VAR)
+        taskbarFuncs.hiVal = int(highPerc[2] + ELEC_VAL_VAR)
+        clean = cv.inRange(hsvClean, (taskbarFuncs.lowHue, taskbarFuncs.lowSat, taskbarFuncs.lowVal),
+                           (taskbarFuncs.hiHue, taskbarFuncs.hiSat, taskbarFuncs.hiVal))  # apply the range filter to the values
+        if show:
+            cv.imshow("adaptive clean", clean)
+        return clean
+    else: #a simpler method that tries to match a large range of yellow
+        taskbarFuncs.lowHue = 20
+        taskbarFuncs.hiHue = 30
+        taskbarFuncs.lowSat = 120
+        taskbarFuncs.hiSat = 255
+        taskbarFuncs.lowVal = 190
+        taskbarFuncs.hiVal = 255
+        clean = cv.inRange(hsvClean, (taskbarFuncs.lowHue, taskbarFuncs.lowSat, taskbarFuncs.lowVal),
+                           (taskbarFuncs.hiHue, taskbarFuncs.hiSat, taskbarFuncs.hiVal))
+        if show:
+            cv.imshow("basic clean", clean)
+        return clean
 
-def trimImage(img, fromTop, newBot, fromLeft, newRight):
+
+def trimImage(img, fromTop, newBot, fromLeft, newRight): #crop the image based on the supplied values
     return img[fromTop:newBot, fromLeft:newRight]
 
 
-def calculateOuterAndInnerPoint(pnt, middle, extraSpace):
+def calculateOuterAndInnerPoint(pnt, middle, extraSpace): #from point and midspace, get a matching outer point for mesh transform
     return [
         [pnt[0] + ((pnt[0] - middle[0]) * (extraSpace[0] * 2)), pnt[1] + ((pnt[1] - middle[1]) * (extraSpace[1] * 2))],
         pnt]
 
-def drawLineWithMid(img, pt1, pt2, mid):
+
+def drawLineWithMid(img, pt1, pt2, mid): #draw a 3 point line
     cv.line(img, [round(pt1[0]), round(pt1[1])],
             [round(mid[0]), round(mid[1])], (0, 255, 0), 1, cv.LINE_AA)
     cv.line(img, [round(pt2[0]), round(pt2[1])],
             [round(mid[0]), round(mid[1])], (0, 255, 0), 1, cv.LINE_AA)
     return img
 
-def drawBox(img, upLeft, upMid, upRight, leftMid, rightMid, lowLeft, lowMid, lowRight):
+
+def drawBox(img, upLeft, upMid, upRight, leftMid, rightMid, lowLeft, lowMid, lowRight): #draw an 8 point box
     drawLineWithMid(img, upLeft, upRight, upMid)
     drawLineWithMid(img, lowLeft, lowRight, lowMid)
     drawLineWithMid(img, upLeft, lowLeft, leftMid)
     drawLineWithMid(img, upRight, lowRight, rightMid)
     return img
 
-def TLXcallbackTrackbar(val):
-    global posDict
-    posDict["TLX"] = val
-
-def TLYcallbackTrackbar(val):
-    global posDict
-    posDict["TLY"] = val
-    
-def TMXcallbackTrackbar(val):
-    global posDict
-    posDict["TMX"] = val
-    
-def TMYcallbackTrackbar(val):
-    global posDict
-    posDict["TMY"] = val
-    
-def TRXcallbackTrackbar(val):
-    global posDict
-    posDict["TRX"] = val
-    
-def TRYcallbackTrackbar(val):
-    global posDict
-    posDict["TRY"] = val
-    
-def MLXcallbackTrackbar(val):
-    global posDict
-    posDict["MLX"] = val
-
-def MLYcallbackTrackbar(val):
-    global posDict
-    posDict["MLY"] = val
-    
-def MRXcallbackTrackbar(val):
-    global posDict
-    posDict["MRX"] = val
-    
-def MRYcallbackTrackbar(val):
-    global posDict
-    posDict["MRY"] = val
-    
-def BLXcallbackTrackbar(val):
-    global posDict
-    posDict["BLX"] = val
-    
-def BLYcallbackTrackbar(val):
-    global posDict
-    posDict["BLY"] = val
-
-def BMXcallbackTrackbar(val):
-    global posDict
-    posDict["BMX"] = val
-    
-def BMYcallbackTrackbar(val):
-    global posDict
-    posDict["BMY"] = val
-    
-def BRXcallbackTrackbar(val):
-    global posDict
-    posDict["BRX"] = val
-    
-def BRYcallbackTrackbar(val):
-    global posDict
-    posDict["BRY"] = val
-
-def lowHueTrackbar(val):
-    global lowHue
-    global hiHue
-    lowHue = val
-    lowHue = min(hiHue - 1, lowHue)
-    cv.setTrackbarPos("LowHue", TRACKBAR_WINDOW_NAME, lowHue)
-
-
-def hiHueTrackbar(val):
-    global lowHue
-    global hiHue
-    hiHue = val
-    hiHue = max(hiHue, lowHue + 1)
-    cv.setTrackbarPos("hiHue", TRACKBAR_WINDOW_NAME, hiHue)
-
-
-def lowSatTrackbar(val):
-    global lowSat
-    global hiSat
-    lowSat = val
-    lowSat = min(hiSat - 1, lowSat)
-    cv.setTrackbarPos("LowSat", TRACKBAR_WINDOW_NAME, lowSat)
-
-
-def hiSatTrackbar(val):
-    global lowSat
-    global hiSat
-    hiSat = val
-    hiSat = max(hiSat, lowSat + 1)
-    cv.setTrackbarPos("hiSat", TRACKBAR_WINDOW_NAME, hiSat)
-
-
-def lowValTrackbar(val):
-    global lowVal
-    global hiVal
-    lowVal = val
-    lowVal = min(hiVal - 1, lowVal)
-    cv.setTrackbarPos("lowVal", TRACKBAR_WINDOW_NAME, lowVal)
-
-
-def hiValTrackbar(val):
-    global lowVal
-    global hiVal
-    hiVal = val
-    hiVal = max(hiVal, lowVal + 1)
-    cv.setTrackbarPos("hiVal", TRACKBAR_WINDOW_NAME, hiVal)
-
-def toggleLines(a,b):
-    global lineTog
-    if lineTog:
-        lineTog = False
-    else:
-        lineTog = True
-
-declared = False
-lowHue = 0
-hiHue = 180
-lowSat = 0
-hiSat = 255
-lowVal = 0
-hiVal = 255
 
 def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, filter, debug=False, show=False):
-    global declared
     src = cv.imread(cv.samples.findFile(baseImg))
     if src is None:
         print('Base Image at ' + baseImg + ' Not Found, skipping')
         return
     fixBadCorners(src)
     if manual:
-        cv.namedWindow(TRACKBAR_WINDOW_NAME)
-        global posDict
-        if not declared:
-            posDict = {"TLX": 0, "TLY": 0, "TMX": round(src.shape[1]/2), "TMY": 0, "TRX": src.shape[1], "TRY": 0, "MLX": 0,
-                       "MLY": round(src.shape[0]/2), "MRX": src.shape[1], "MRY": round(src.shape[0]/2), "BLX": 0,
-                       "BLY": src.shape[0], "BMX": round(src.shape[1]/2), "BMY": src.shape[0], "BRX": src.shape[1], "BRY": src.shape[0]}
-            for point, value in posDict.items():
-                cv.createTrackbar(point, TRACKBAR_WINDOW_NAME, value, max(src.shape[1], src.shape[0]), globals()[point+"callbackTrackbar"])
-            cv.createButton("Toggle Lines", toggleLines)
-            cv.namedWindow("manual preview", cv.WINDOW_NORMAL)
-            declared = True
-        blank = np.zeros(shape=[3, 600], dtype=np.uint8)
-        while True:
-            if lineTog:
-                boxSrc = drawBox(np.copy(src), [posDict["TLX"], posDict["TLY"]], [posDict["TMX"], posDict["TMY"]], [posDict["TRX"], posDict["TRY"]],
-                                 [posDict["MLX"], posDict["MLY"]], [posDict["MRX"], posDict["MRY"]],
-                                 [posDict["BLX"], posDict["BLY"]], [posDict["BMX"], posDict["BMY"]], [posDict["BRX"], posDict["BRY"]])
-            else:
-                boxSrc = src
-            cv.imshow(TRACKBAR_WINDOW_NAME, blank)
-            cv.imshow("manual preview", boxSrc)
-            key = cv.waitKey(30)
-            if key == ord('q') or key == 27:
-                break
-            upLeft = [Decimal(posDict["TLX"]), Decimal(posDict["TLY"])]
-            upMid = [Decimal(posDict["TMX"]), Decimal(posDict["TMY"])]
-            upRight = [Decimal(posDict["TRX"]), Decimal(posDict["TRY"])]
-            leftMid = [Decimal(posDict["MLX"]), Decimal(posDict["MLY"])]
-            rightMid = [Decimal(posDict["MRX"]), Decimal(posDict["MRY"])]
-            lowLeft = [Decimal(posDict["BLX"]), Decimal(posDict["BLY"])]
-            lowMid = [Decimal(posDict["BMX"]), Decimal(posDict["BMY"])]
-            lowRight = [Decimal(posDict["BRX"]), Decimal(posDict["BRY"])]
+        upLeft, upMid, upRight, leftMid, rightMid, lowLeft, lowMid, lowRight  = taskbarFuncs.CustomBordersUI(src)
     else:
         if cleanImg:
             clean = cv.imread(cv.samples.findFile(cleanImg))
@@ -575,94 +444,44 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, filte
             clean = src
         if debug:
             print("image size: " + str(src.shape))
-        global lowHue
-        global hiHue
-        global lowSat
-        global hiSat
-        global lowVal
-        global hiVal
 
-        hsvClean = cv.cvtColor(clean, cv.COLOR_BGR2HSV)
-        elecCheck = cv.inRange(hsvClean, (20, 70, 0), (30, 255, 255))
+        hsvClean = cv.cvtColor(clean, cv.COLOR_BGR2HSV) #make a HSV version of clean for filtering
+        elecCheck = cv.inRange(hsvClean, (20, 70, 0), (30, 255, 255)) #check the colour of the image to see if it's electric and needs tighter filters
         electric = False
-        if np.sum(elecCheck) > src.shape[0] * src.shape[1] * 128:
+        if np.sum(elecCheck) > src.shape[0] * src.shape[1] * 128: #check only against the text of the image, to avoid the art throwing it off
             electric = True
         if debug:
             print("Electric: " + str(electric))
-        if electric:
-            clean = getAdaptiveClean(hsvClean)
-        else:
-            lowHue = 20
-            hiHue = 30
-            lowSat = 120
-            hiSat = 255
-            lowVal = 190
-            hiVal = 255
-            clean = cv.inRange(hsvClean, (lowHue, lowSat, lowVal), (hiHue, hiSat, hiVal))
-
+        clean = filterImage(hsvClean, electric, show)
         if filter:
-            cv.namedWindow(TRACKBAR_WINDOW_NAME)
-            if not declared:
-                cv.createTrackbar("hiHue", TRACKBAR_WINDOW_NAME, hiHue, 180, hiHueTrackbar)
-                cv.createTrackbar("LowHue", TRACKBAR_WINDOW_NAME, lowHue, 255, lowHueTrackbar)
-                cv.createTrackbar("HiSat", TRACKBAR_WINDOW_NAME, hiSat, 255, hiSatTrackbar)
-                cv.createTrackbar("LoSat", TRACKBAR_WINDOW_NAME, lowSat, 255, lowSatTrackbar)
-                cv.createTrackbar("HiVal", TRACKBAR_WINDOW_NAME, hiVal, 255, hiValTrackbar)
-                cv.createTrackbar("LoVal", TRACKBAR_WINDOW_NAME, lowVal, 255, lowValTrackbar)
-                cv.createButton("Toggle Lines", toggleLines)
-                cv.namedWindow("manual preview", cv.WINDOW_NORMAL)
-                declared = True
-            blank = np.zeros(shape=[3, 600], dtype=np.uint8)
-
-            while True:
-                clean = cv.inRange(hsvClean, (lowHue, lowSat, lowVal), (hiHue, hiSat, hiVal))
-                preview = cv.medianBlur(clean, 3)
-                cv.imshow(TRACKBAR_WINDOW_NAME, blank)
-                cv.imshow("manual preview", preview)
-                key = cv.waitKey(30)
-                if key == ord('q') or key == 27:
-                    break
+            clean = taskbarFuncs.HSVFilterUI(hsvClean) #set custom filter is enabled, does a normal filter first to get a sane default
                     
-        clean = cv.medianBlur(clean, 3)
+        clean = cv.medianBlur(clean, 3) #use a median blur to fill in small gaps
 
         edges = cv.Canny(clean, 25, 1200, True, 5)
         if show:
             cv.imshow("clean", clean)
             cv.imshow("edges", edges)
         if not edge:
-            edgeSize = round(DEFAULT_BORDER_TOLERANCE * src.shape[0])
+            edgeSize = round(DEFAULT_BORDER_TOLERANCE * src.shape[0]) #set default value for expected border size
             edge = [edgeSize, edgeSize, edgeSize, edgeSize]
         if debug:
             print("edges " + str(edge))
 
         upCorners, upMid, lowCorners, lowMid, leftCorners, leftMid, rightCorners, rightMid = getPoints(edges, edge, debug, show)
-        if not (upCorners and lowCorners and leftCorners and rightCorners):
-            if not electric:
-                clean = getAdaptiveClean(hsvClean)
-                clean = cv.medianBlur(clean, 3)
-                edges = cv.Canny(clean, 25, 1200, True, 5)
-                upCorners, upMid, lowCorners, lowMid, leftCorners, leftMid, rightCorners, rightMid = getPoints(
+
+        if not (upCorners and lowCorners and leftCorners and rightCorners): #try the other method, in case of mis-detection
+            clean = filterImage(hsvClean, not electric, show)
+            clean = cv.medianBlur(clean, 3)
+            edges = cv.Canny(clean, 25, 1200, True, 5)
+            upCorners, upMid, lowCorners, lowMid, leftCorners, leftMid, rightCorners, rightMid = getPoints(
                 edges, edge, debug, show)
-                if not (upCorners and lowCorners and leftCorners and rightCorners):
-                    print("could not find 4 edges")
-                    if show:
-                        cv.imshow("adaptive clean", clean)
-                        cv.imshow("adaptive edges", edges)
-                        cv.waitKey()
-                    return
-            else:
-                clean = cv.inRange(hsvClean, (20, 180, 200), (30, 255, 255))
-                clean = cv.medianBlur(clean, 3)
-                edges = cv.Canny(clean, 25, 1200, True, 5)
-                upCorners, upMid, lowCorners, lowMid, leftCorners, leftMid, rightCorners, rightMid = getPoints(
-                edges, edge, debug, show)
-                if not (upCorners and lowCorners and leftCorners and rightCorners):
-                    print("could not find 4 edges")
-                    if show:
-                        cv.imshow("basic clean", clean)
-                        cv.imshow("basic edges", edges)
-                        cv.waitKey()
-                    return
+            if not (upCorners and lowCorners and leftCorners and rightCorners):
+                if show:
+                    cv.imshow("backup edges", edges)
+                    cv.waitKey()
+                print("could not find 4 edges")
+                return
 
         if lowCorners and rightCorners and upCorners and leftCorners:
             #sanity checks in case of a midpoint in the boundry
@@ -680,7 +499,7 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, filte
                 print("lowMid: " + str(lowMid))
                 print("leftMid: " + str(leftMid))
                 print("rightMid: " + str(rightMid))
-
+            #get corners by intersecting lines
             upLeft = intersect((upCorners[0], upMid), (leftCorners[0], leftMid))
             upRight = intersect((upCorners[1], upMid), (rightCorners[0], rightMid))
             lowLeft = intersect((lowCorners[0], lowMid), (leftCorners[1], leftMid))
@@ -707,9 +526,11 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, filte
 
     if not border:
         border = [0, 0, 0, 0]
+    #set the amount of space outside of the card frame to keep
     extraSpace = [max(border[0], border[1]) + Decimal(0.05), max(border[2], border[3]) + Decimal(0.05)]
     if debug:
         print("extraSpace: " + str(extraSpace))
+    #the offset from the frames current position compared to before the extra was added
     offsetX = Decimal(round(src.shape[0] * extraSpace[0]))
     offsetY = Decimal(round(src.shape[1] * extraSpace[1]))
 
@@ -730,8 +551,6 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, filte
     rightMid = [rightMid[0] + offsetX, (lowRight[1] + upRight[1]) / 2]
     midPoint = [(leftMid[0] + rightMid[0]) / 2, (upMid[1] + lowMid[1]) / 2]
 
-
-
     if debug:
         print("UpperLeft: " + str(upLeft))
         print("UpperRight: " + str(upRight))
@@ -742,7 +561,7 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, filte
         print("cardHeight: " + str(cardHeight))
         print("border: " + str(border))
 
-    if res:
+    if res: #set the target card's size
         border = [res[1] * Decimal(border[0]), res[1] * Decimal(border[1]), res[0] * Decimal(border[2]),
                   res[0] * Decimal(border[3])]
         targetWidth = round(res[0] - (border[2] + border[3]))
@@ -753,12 +572,12 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, filte
         border = [Decimal((cardHeight * border[0])), Decimal((cardHeight * border[1])),
                   Decimal((cardWidth * border[2])),
                   Decimal((cardWidth * border[3]))]
-
+    #set the target position
     targetOffsetX = Decimal(round(((targetWidth * extraSpace[0])) * 2) / 2)
     targetOffsetY = Decimal(round(((targetHeight * extraSpace[1])) * 2) / 2)
     targetCard = [targetOffsetY, targetOffsetY + targetHeight, targetOffsetX, targetOffsetX + targetWidth]
-    targetMid = (
-    Decimal(targetWidth * (Decimal(0.5) + extraSpace[0])), Decimal(targetHeight * (Decimal(0.5) + extraSpace[1])))
+    targetMid = (Decimal(targetWidth * (Decimal(0.5) + extraSpace[0])), Decimal(targetHeight * (Decimal(0.5) + extraSpace[1])))
+
     if debug:
         print("border: " + str(border))
         print("extraSpace: " + str(extraSpace))
@@ -766,6 +585,7 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, filte
         print("targethieght: " + str(targetHeight))
         print("targetmid: " + str(targetMid))
         print("targetcard: " + str(targetCard))
+    #create arrays in scipy compatible format
     srcP = np.array(
         calculateOuterAndInnerPoint(upLeft, midPoint, extraSpace) +
         calculateOuterAndInnerPoint(leftMid, midPoint, extraSpace) +
@@ -794,17 +614,19 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, filte
         print(offsetX)
         print(offsetY)
 
-    src = cv.cvtColor(src, cv.COLOR_BGR2BGRA)
+    #src = cv.cvtColor(src, cv.COLOR_BGR2BGRA)
+    #expand the border to fill the extra space
     bordered = addBlurredExtendBorder(src, round(offsetY), round(offsetY), round(offsetX), round(offsetX))
 
     tform = PiecewiseAffineTransform()
     tform.estimate(dstP, srcP)
+    # mesh transform the image into shape
     warped = img_as_ubyte(warp(bordered, tform, output_shape=(
     round(targetHeight + targetOffsetY * 2), round(targetWidth + targetOffsetX * 2))))
 
     if trim:
         warped = trimImage(targetCard[0], targetCard[1], targetCard[2], targetCard[3])
-
+    #calculate how much of the new image to trim off/add on to create the correct size border
     adjustNeeded = [round(round(targetCard[0] - border[0]) * Decimal(-1)),
                     round(round(targetCard[1] + border[1]) - warped.shape[0]),
                     round(round(targetCard[2] - border[2]) * Decimal(-1)),
@@ -817,7 +639,8 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, filte
     if any(side > 0 for side in adjustNeeded):
         warped = addBlurredExtendBorder(warped, max(0, border[0]), max(0, border[1]), max(0, border[2]),
                                         max(0, border[3]))
-
+    #apply an alpha mask if provided, to make the corners
+    warped = cv.cvtColor(sharpen(warped, 3, 0.28, 1), cv.COLOR_BGR2BGRA)
     if mask:
         warped = maskcorners.processMask(warped, mask)
     if show:

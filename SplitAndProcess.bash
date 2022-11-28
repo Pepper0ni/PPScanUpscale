@@ -17,6 +17,6 @@ for f in $(find ./dark -name "*.png" -type f); do
  bash ./PostProcessNoGamma.bash $f
 done
 
-rm -r ./light/
-rm -r ./dark/
-rm -r ./balanced/
+#rm -r ./light/
+#rm -r ./dark/
+#rm -r ./balanced/

@@ -8,10 +8,10 @@ def trimImage(img, fromTop, newBot, fromLeft, newRight):
     return img[fromTop:newBot, fromLeft:newRight]
 
 
-def processImage(img):
+def processImage(img, name):
     cutImg = trimImage(cv.cvtColor(img, cv.COLOR_BGR2HSV), round(img.shape[0] * 0.65), img.shape[0]-30, 30, img.shape[1]-30)
     #print(np.percentile(cutImg, 2, (0, 1)))
-    if np.percentile(cutImg, 55, (0, 1))[2] < 70:
+    if name.endswith("fe.png") and np.percentile(cutImg, 55, (0, 1))[2] < 70:
         return 2
     elif np.percentile(cutImg, 2.25, (0, 1))[2] <= 30:
         return 1
@@ -59,7 +59,7 @@ def resolveImage(input, dark, balanced, light):
     if img is None:
         print('Image at ' + input + ' Not Found, skipping')
         return
-    isLight = processImage(img)
+    isLight = processImage(img, input)
     if isLight == 0:
         cv.imwrite(light, img)
     elif isLight == 1:
