@@ -24,7 +24,8 @@ ELEC_HUE_VAR = 1 #sets the variance in hue for the adaptive border detection to 
 ELEC_SAT_VAR = 3 #sets the variance in saturation for the adaptive border detection to accept
 ELEC_VAL_VAR = 1 #sets the variance in value for the adaptive border detection to accept
 CORNER_FIX_STREGNTH = 5 #sets how large an area, and how strong a blur, to use for the corner fixing
-lineTog = True
+timesRun = 0
+
 
 def sharpen(src, ksize, amount, iter):
     hsvSrc = cv.cvtColor(src, cv.COLOR_BGR2HSV_FULL)
@@ -33,12 +34,13 @@ def sharpen(src, ksize, amount, iter):
         v = img_as_ubyte(unsharp_mask(v, ksize, amount))
     return  cv.cvtColor(cv.merge([h, s, v]), cv.COLOR_HSV2BGR_FULL)
 
-
 def getMidpoint(line): #get the midpoint of a line
     return [(line[0][0] + line[1][0]) / 2, (line[0][1] + line[1][1]) / 2]
 
-
 def intersect(line1, line2): #find interdection between 2 points
+    if not (line1 and line2) or not (line1[0] and line1[1] and line2[0] and line2[1]):
+        #if line missing, propogate None
+        return None
     denom = (line2[1][1] - line2[0][1]) * (line1[1][0] - line1[0][0]) - (line2[1][0] - line2[0][0]) * (
             line1[1][1] - line1[0][1])
     if denom == 0:
@@ -121,8 +123,8 @@ def pasteImage(base, sprite, posX, posY): #paste 1 image into another in the spe
     base[round(posY):round(sprite.shape[0] + posY), round(posX):round(sprite.shape[1] + posX), :] = sprite
     return base
 
-def addBlurredExtendBorder(src, top, bottom, left, right): #add an extend border with a blur effect to smooth out varience
-    blurred = cv.blur(src, (25, 25), 0)
+def addBlurredExtendBorder(src, top, bottom, left, right, blur): #add an extend border with a blur effect to smooth out varience
+    blurred = cv.blur(src, (blur[0], blur[1]), 0)
     blurred = cv.copyMakeBorder(blurred, round(top), round(bottom), round(left), round(right), cv.BORDER_REPLICATE)
     blurred = pasteImage(blurred, src, left, top)
     return blurred
@@ -320,39 +322,110 @@ def detectLines(img, threshold, side, debug, show): #find the 8-point lines in a
     return None, None
 
 def correctMid(mid, midAxis, minCorner, maxCorner, ownCorners): #check if the midpoint is outside the border, change to a single line if it is
-    if mid[midAxis] <= minCorner or mid[midAxis] >= maxCorner:
+    if mid and minCorner and maxCorner and ownCorners and (mid[midAxis] <= minCorner+1 or mid[midAxis] >= maxCorner-1):
         print("mid out of bounds, attempting to correct")
         return getMidpoint(ownCorners)
     return mid
 
-def getPoints(edges, edge, debug, show): #get the 9 points of the border
+def getLines(clean, edge, debug, show): #get the 9 points of the border
+    clean = cv.medianBlur(clean, 3) #use a median blur to fill in small gaps
+    edges = cv.Canny(clean, 25, 1200, True, 5)
+    global timesRun
+    timesRun += 1
+    if show:
+        cv.imshow("clean " + str(timesRun), clean)
+        cv.imshow("edges " + str(timesRun), edges)
+
     threshold = DEFAULT_H_THRESHOLD * edges.shape[1] #set line threshold based on image resolution
     upCorners, upMid = detectLines(trimImage(np.copy(edges), MIN_LINE_EDGE, edge[0], 0, edges.shape[1]), threshold, 0, debug, show)
-    lowCorners, lowMid = detectLines(trimImage(np.copy(edges), edges.shape[0] - edge[1], edges.shape[0] - MIN_LINE_EDGE, 0, edges.shape[1]), threshold, 1, debug,
-                                     show)
+    lowCorners, lowMid = detectLines(trimImage(np.copy(edges), edges.shape[0] - edge[1], edges.shape[0] - MIN_LINE_EDGE, 0, edges.shape[1]), threshold, 1, debug, show)
 
     threshold = DEFAULT_V_THRESHOLD * edges.shape[0]
-    leftCorners, leftMid = detectLines(trimImage(np.copy(edges), 0, edges.shape[0] - MIN_LINE_EDGE, MIN_LINE_EDGE, edge[2]), threshold, 2,
+    leftCorners, leftMid = detectLines(trimImage(np.copy(edges), 0, edges.shape[0], MIN_LINE_EDGE, edge[2]), threshold, 2,
                                        debug, show)
     rightCorners, rightMid = detectLines(
         trimImage(np.copy(edges), 0, edges.shape[0], edges.shape[1] - edge[3], edges.shape[1] - MIN_LINE_EDGE), threshold, 3, debug,
         show)
 
-    if upCorners and lowCorners and leftCorners and rightCorners: #correct the corners to match the amounts of image chopped of when testing
+    with suppress(TypeError):
         upCorners[0][1] += MIN_LINE_EDGE
         upCorners[1][1] += MIN_LINE_EDGE
+    with suppress(TypeError):
         upMid[1] += MIN_LINE_EDGE
+    with suppress(TypeError):
         leftCorners[0][0] += MIN_LINE_EDGE
         leftCorners[1][0] += MIN_LINE_EDGE
+    with suppress(TypeError):
         leftMid[0] += MIN_LINE_EDGE
+    with suppress(TypeError):
         lowCorners[0][1] += edges.shape[0] - edge[1]
         lowCorners[1][1] += edges.shape[0] - edge[1]
+    with suppress(TypeError):
         lowMid[1] += edges.shape[0] - edge[1]
+    with suppress(TypeError):
         rightCorners[0][0] += edges.shape[1] - edge[3]
         rightCorners[1][0] += edges.shape[1] - edge[3]
+    with suppress(TypeError):
         rightMid[0] += edges.shape[1] - edge[3]
 
     return upCorners, upMid, lowCorners, lowMid, leftCorners, leftMid, rightCorners, rightMid
+
+def getPointsFromLines(clean, edge, debug, show, manual, src):
+    global timesRun
+    upLeft, upRight, lowLeft, lowRight = None, None, None, None
+    first = True
+    upCorners, upMid, lowCorners, lowMid, leftCorners, leftMid, rightCorners, rightMid = getLines(clean, edge, debug, show)
+    if not (upCorners and lowCorners and leftCorners and rightCorners):
+        print("ERROR: Could not find 4 edges")
+        first = False
+        if show:
+            lines = drawLineWithMid(src, upCorners[0], upCorners[1], upMid)
+            lines = drawLineWithMid(lines, lowCorners[0], lowCorners[1], lowMid)
+            lines = drawLineWithMid(lines, leftCorners[0], leftCorners[1], leftMid)
+            lines = drawLineWithMid(lines, rightCorners[0], rightCorners[1], rightMid)
+            cv.imshow("Detected Lines " + str(timesRun), lines)
+    # sanity checks in case of a midpoint in the boundry
+    with suppress(TypeError):
+        upMid = correctMid(upMid, 0, leftCorners[0][0], rightCorners[0][0], upCorners)
+    with suppress(TypeError):
+        lowMid = correctMid(lowMid, 0, leftCorners[1][0], rightCorners[1][0], lowCorners)
+    with suppress(TypeError):
+        leftMid = correctMid(leftMid, 1, upCorners[0][1], lowCorners[0][1], leftCorners)
+    with suppress(TypeError):
+        rightMid = correctMid(rightMid, 1, upCorners[1][1], lowCorners[1][1], rightCorners)
+
+    if debug:
+        print("upCorners: " + str(upCorners))
+        print("lowCorners: " + str(lowCorners))
+        print("leftCorners: " + str(leftCorners))
+        print("rightCorners: " + str(rightCorners))
+        print("upMid: " + str(upMid))
+        print("lowMid: " + str(lowMid))
+        print("leftMid: " + str(leftMid))
+        print("rightMid: " + str(rightMid))
+    # get corners by intersecting lines
+    with suppress(TypeError):
+        upRight = intersect((upCorners[1], upMid), (rightCorners[0], rightMid))
+    with suppress(TypeError):
+        upLeft = intersect((upCorners[0], upMid), (leftCorners[0], leftMid))
+    with suppress(TypeError):
+        lowLeft = intersect((lowCorners[0], lowMid), (leftCorners[1], leftMid))
+    with suppress(TypeError):
+        lowRight = intersect((lowCorners[1], lowMid), (rightCorners[1], rightMid))
+    if debug:
+        print("UpperLeft: " + str(upLeft))
+        print("UpperRight: " + str(upRight))
+        print("LowerLeft: " + str(lowLeft))
+        print("LowerRight: " + str(lowRight))
+    if first and not (upLeft and upRight and lowLeft and lowRight):
+        print("ERROR: Lines do not intersect")
+        if show:
+            box = drawBox(src, upLeft, upMid, upRight, leftMid, rightMid, lowLeft, lowMid, lowRight)
+            cv.imshow("Detected Lines " + str(timesRun), box)
+
+    if manual:
+        upLeft, upMid, upRight, leftMid, rightMid, lowLeft, lowMid, lowRight = taskbarFuncs.CustomBordersUI(src, upLeft, upMid, upRight, leftMid, rightMid, lowLeft, lowMid, lowRight)
+    return upLeft, upMid, upRight, leftMid, rightMid, lowLeft, lowMid, lowRight
 
 def filterImage(hsvClean, adaptive, show):
     if adaptive: #an apative method that tried to take a chunk of the border and make a filter based on it.
@@ -410,10 +483,12 @@ def calculateOuterAndInnerPoint(pnt, middle, extraSpace): #from point and midspa
 
 
 def drawLineWithMid(img, pt1, pt2, mid): #draw a 3 point line
-    cv.line(img, [round(pt1[0]), round(pt1[1])],
-            [round(mid[0]), round(mid[1])], (0, 255, 0), 1, cv.LINE_AA)
-    cv.line(img, [round(pt2[0]), round(pt2[1])],
-            [round(mid[0]), round(mid[1])], (0, 255, 0), 1, cv.LINE_AA)
+    if pt1 and mid:
+        cv.line(img, [round(pt1[0]), round(pt1[1])],
+                [round(mid[0]), round(mid[1])], (0, 255, 0), 1, cv.LINE_AA)
+    if pt2 and mid:
+        cv.line(img, [round(pt2[0]), round(pt2[1])],
+                [round(mid[0]), round(mid[1])], (0, 255, 0), 1, cv.LINE_AA)
     return img
 
 
@@ -425,108 +500,49 @@ def drawBox(img, upLeft, upMid, upRight, leftMid, rightMid, lowLeft, lowMid, low
     return img
 
 
-def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, filter, debug=False, show=False):
+def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, filter, blur, debug=False, show=False):
     src = cv.imread(cv.samples.findFile(baseImg))
     if src is None:
         print('Base Image at ' + baseImg + ' Not Found, skipping')
         return
     fixBadCorners(src)
-    if manual:
-        upLeft, upMid, upRight, leftMid, rightMid, lowLeft, lowMid, lowRight  = taskbarFuncs.CustomBordersUI(src)
-    else:
-        if cleanImg:
-            clean = cv.imread(cv.samples.findFile(cleanImg))
-        else:
-            clean = src
-
+    if not edge:
+        edgeSize = round(DEFAULT_BORDER_TOLERANCE * src.shape[0]) #set default value for expected border size
+        edge = [edgeSize, edgeSize, edgeSize, edgeSize]
+    if cleanImg:
+        clean = cv.imread(cv.samples.findFile(cleanImg))
         if clean is None:
             print('Clean Image at ' + cleanImg + ' Not Found, attempting with base image')
             clean = src
-        if debug:
-            print("image size: " + str(src.shape))
+    else:
+        clean = src
 
-        hsvClean = cv.cvtColor(clean, cv.COLOR_BGR2HSV) #make a HSV version of clean for filtering
-        elecCheck = cv.inRange(hsvClean, (20, 70, 0), (30, 255, 255)) #check the colour of the image to see if it's electric and needs tighter filters
-        electric = False
-        if np.sum(elecCheck) > src.shape[0] * src.shape[1] * 128: #check only against the text of the image, to avoid the art throwing it off
-            electric = True
-        if debug:
-            print("Electric: " + str(electric))
-        clean = filterImage(hsvClean, electric, show)
-        if filter:
-            clean = taskbarFuncs.HSVFilterUI(hsvClean) #set custom filter is enabled, does a normal filter first to get a sane default
-                    
-        clean = cv.medianBlur(clean, 3) #use a median blur to fill in small gaps
-
-        edges = cv.Canny(clean, 25, 1200, True, 5)
-        if show:
-            cv.imshow("clean", clean)
-            cv.imshow("edges", edges)
-        if not edge:
-            edgeSize = round(DEFAULT_BORDER_TOLERANCE * src.shape[0]) #set default value for expected border size
-            edge = [edgeSize, edgeSize, edgeSize, edgeSize]
-        if debug:
-            print("edges " + str(edge))
-
-        upCorners, upMid, lowCorners, lowMid, leftCorners, leftMid, rightCorners, rightMid = getPoints(edges, edge, debug, show)
-
-        if not (upCorners and lowCorners and leftCorners and rightCorners): #try the other method, in case of mis-detection
-            clean = filterImage(hsvClean, not electric, show)
-            clean = cv.medianBlur(clean, 3)
-            edges = cv.Canny(clean, 25, 1200, True, 5)
-            upCorners, upMid, lowCorners, lowMid, leftCorners, leftMid, rightCorners, rightMid = getPoints(
-                edges, edge, debug, show)
-            if not (upCorners and lowCorners and leftCorners and rightCorners):
-                if show:
-                    cv.imshow("backup edges", edges)
-                    cv.waitKey()
-                print("could not find 4 edges")
-                return
-
-        if lowCorners and rightCorners and upCorners and leftCorners:
-            #sanity checks in case of a midpoint in the boundry
-            upMid = correctMid(upMid, 0, leftCorners[0][0], rightCorners[0][0], upCorners)
-            lowMid = correctMid(lowMid, 0, leftCorners[1][0], rightCorners[1][0], lowCorners)
-            leftMid = correctMid(leftMid, 1, upCorners[0][1], lowCorners[0][1], leftCorners)
-            rightMid = correctMid(rightMid, 1, upCorners[1][1], lowCorners[1][1], rightCorners)
-
-            if debug:
-                print("upCorners: " + str(upCorners))
-                print("lowCorners: " + str(lowCorners))
-                print("leftCorners: " + str(leftCorners))
-                print("rightCorners: " + str(rightCorners))
-                print("upMid: " + str(upMid))
-                print("lowMid: " + str(lowMid))
-                print("leftMid: " + str(leftMid))
-                print("rightMid: " + str(rightMid))
-            #get corners by intersecting lines
-            upLeft = intersect((upCorners[0], upMid), (leftCorners[0], leftMid))
-            upRight = intersect((upCorners[1], upMid), (rightCorners[0], rightMid))
-            lowLeft = intersect((lowCorners[0], lowMid), (leftCorners[1], leftMid))
-            lowRight = intersect((lowCorners[1], lowMid), (rightCorners[1], rightMid))
-
-            if not (upLeft and upRight and lowLeft and lowRight):
-                print("ERROR: Lines do not intersect")
-                print("UpperLeft: " + str(upLeft))
-                print("UpperRight: " + str(upRight))
-                print("LowerLeft: " + str(lowLeft))
-                print("LowerRight: " + str(lowRight))
-                if show:
-                    edges = cv.cvtColor(edges, cv.COLOR_GRAY2BGR)
-                    edges = drawLineWithMid(edges, upCorners[0], upCorners[1], upMid)
-                    edges = drawLineWithMid(edges, lowCorners[0], lowCorners[1], lowMid)
-                    edges = drawLineWithMid(edges, leftCorners[0], leftCorners[1], leftMid)
-                    edges = drawLineWithMid(edges, rightCorners[0], upCorners[1], upMid)
-                    cv.imshow("Detected Lines", edges)
-                    cv.waitKey()
-                return None
-        else:
+    hsvClean = cv.cvtColor(clean, cv.COLOR_BGR2HSV) #make a HSV version of clean for filtering
+    elecCheck = cv.inRange(hsvClean, (20, 70, 0), (30, 255, 255)) #check the colour of the image to see if it's electric and needs tighter filters
+    electric = False
+    if np.sum(elecCheck) > src.shape[0] * src.shape[1] * 128: #check only against the text of the image, to avoid the art throwing it off
+        electric = True
+    if debug:
+        print("image size: " + str(src.shape))
+        print("edges " + str(edge))
+        print("Electric: " + str(electric))
+    clean = filterImage(hsvClean, electric, show)
+    if filter:
+        clean = taskbarFuncs.HSVFilterUI(hsvClean) #set custom filter is enabled, does a normal filter first to get a sane default
+    upLeft, upMid, upRight, leftMid, rightMid, lowLeft, lowMid, lowRight = getPointsFromLines(clean, edge, debug, show, manual, src)
+    if not (upLeft and upMid and upRight and leftMid and rightMid and lowLeft and lowMid and lowRight):
+        print("Trying again with other filter...")
+        clean = filterImage(hsvClean, not electric, show)
+        upLeft, upMid, upRight, leftMid, rightMid, lowLeft, lowMid, lowRight = getPointsFromLines(clean, edge, debug, show, manual, src)
+        if not (upLeft and upMid and upRight and leftMid and rightMid and lowLeft and lowMid and lowRight):
             print("ERROR: 4 lines not found in image " + baseImg)
+            if show:
+                cv.waitKey()
             return None
 
     if not border:
         border = [0, 0, 0, 0]
-    #set the amount of space outside of the card frame to keep
+    #set the amount of space outside the card frame to keep
     extraSpace = [max(border[0], border[1]) + Decimal(0.05), max(border[2], border[3]) + Decimal(0.05)]
     if debug:
         print("extraSpace: " + str(extraSpace))
@@ -535,7 +551,7 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, filte
     offsetY = Decimal(round(src.shape[1] * extraSpace[1]))
 
     if show and not manual:
-        edges = drawBox(cv.cvtColor(edges, cv.COLOR_GRAY2BGR), upLeft, upMid, upRight, leftMid, rightMid, lowLeft, lowMid, lowRight)
+        edges = drawBox(src, upLeft, upMid, upRight, leftMid, rightMid, lowLeft, lowMid, lowRight)
         cv.imshow("4 main lines", edges)
 
     upLeft = [upLeft[0] + offsetX, upLeft[1] + offsetY]
@@ -616,7 +632,7 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, filte
 
     #src = cv.cvtColor(src, cv.COLOR_BGR2BGRA)
     #expand the border to fill the extra space
-    bordered = addBlurredExtendBorder(src, round(offsetY), round(offsetY), round(offsetX), round(offsetX))
+    bordered = addBlurredExtendBorder(src, round(offsetY), round(offsetY), round(offsetX), round(offsetX), blur)
 
     tform = PiecewiseAffineTransform()
     tform.estimate(dstP, srcP)
@@ -638,7 +654,7 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, filte
                  max(0, adjustNeeded[2] * -1):len(warped[0]) + min(0, adjustNeeded[3])]
     if any(side > 0 for side in adjustNeeded):
         warped = addBlurredExtendBorder(warped, max(0, border[0]), max(0, border[1]), max(0, border[2]),
-                                        max(0, border[3]))
+                                        max(0, border[3]), blur)
     #apply an alpha mask if provided, to make the corners
     warped = cv.cvtColor(sharpen(warped, 3, 0.28, 1), cv.COLOR_BGR2BGRA)
     if mask:
@@ -676,6 +692,7 @@ def processArgs(inputText):
     mask = None
     manual = False
     filter = False
+    blur = [25, 25]
 
     msg = "Improves old pokemon card scans"
     parser = argparse.ArgumentParser(description=msg)
@@ -700,6 +717,7 @@ def processArgs(inputText):
                                              "good for rounded corners.")
     parser.add_argument("-ma", "--Manual", help="Detect the edges manually. default: False")
     parser.add_argument("-f", "--Filter", help="Bring up the filter menu to customise the filter used. default: False")
+    parser.add_argument("-bb", "--BorderBlur", help="how much to blur the border, as so x,y. default: 25,25")
 
     args = parser.parse_args()
 
@@ -727,17 +745,19 @@ def processArgs(inputText):
         manual = args.Manual
     if args.Filter:
         filter = args.Filter
-    return input, clean, output, border, trim, edge, res, mask, manual, filter, debug, show
+    if args.BorderBlur:
+        blur = processMultiArg(args.BorderBlur, 2, False)
+    return input, clean, output, border, trim, edge, res, mask, manual, filter, blur, debug, show
 
 
-def resolveImage(input, clean, output, border, trim, edge, res, mask, manual, filter, debug, show):
+def resolveImage(input, clean, output, border, trim, edge, res, mask, manual, filter, blur, debug, show):
     print("processing " + input)
-    image = processImage(input, clean, border, trim, edge, res, mask, manual, filter, debug, show)
+    image = processImage(input, clean, border, trim, edge, res, mask, manual, filter, blur, debug, show)
     if image is not None:
         cv.imwrite(output, image)
 
 
-def processFolder(input, clean, output, border, trim, edge, res, mask, manual, filter, debug, show):
+def processFolder(input, clean, output, border, trim, edge, res, mask, manual, filter, blur, debug, show):
     with suppress(FileExistsError):
         os.mkdir(output)
     with os.scandir(input) as entries:
@@ -748,19 +768,19 @@ def processFolder(input, clean, output, border, trim, edge, res, mask, manual, f
             if clean:
                 cleanPath = os.path.join(clean, entry.name)
             if os.path.isfile(inputPath) and entry.name != "Place Images Here":
-                resolveImage(inputPath, cleanPath, outputPath, border, trim, edge, res, mask, manual, filter, debug, show)
+                resolveImage(inputPath, cleanPath, outputPath, border, trim, edge, res, mask, manual, filter, blur, debug, show)
             elif os.path.isdir(inputPath):
-                processFolder(inputPath, cleanPath, outputPath, border, trim, edge, res, mask, manual, filter, debug, show)
+                processFolder(inputPath, cleanPath, outputPath, border, trim, edge, res, mask, manual, filter, blur, debug, show)
 
 
 def main():
-    input, clean, output, border, trim, edge, res, mask, manual, filter, debug, show = processArgs("folder")
+    input, clean, output, border, trim, edge, res, mask, manual, filter, blur, debug, show = processArgs("folder")
     if not input:
         input = os.path.join(os.getcwd(), "input")
     if os.path.isfile(input):
-        resolveImage(input, clean, output, border, trim, edge, res, mask, manual, filter, debug, show)
+        resolveImage(input, clean, output, border, trim, edge, res, mask, manual, filter, blur, debug, show)
     elif os.path.isdir(input):
-        processFolder(input, clean, output, border, trim, edge, res, mask, manual, filter, debug, show)
+        processFolder(input, clean, output, border, trim, edge, res, mask, manual, filter, blur, debug, show)
     else:
         print("Input file not found.")
 

@@ -16,6 +16,6 @@ echo "$fd"
 echo "$fn"
 mkdir -p ./postprocess/"$fd";
 if ! [ -f "$fn" ]; then
- gmic input "$1" iain_nr_2019 0.05,1,-0.5,0.5,0.6,1,0,3,0,0,2,0,1,0,0 fx_LCE 200,2,0.04,0,0,0 "$fn"
+ gmic input "$1" iain_nr_2019 0.05,1,-0.5,0.5,0.6,1,0,3,0,0,2,0,1,0,0 fx_LCE 200,2,0.04,0,0,0 output "$fn"
 fi
 
