@@ -31,11 +31,11 @@ def processFile(upsampler, path, outputPath):
         print("saving:" + outputPath)
         cv.imwrite(outputPath, output)
 
-def exportImages(esrgan, model, input, outputPath):
+def exportImages(esrgan, model, input, outputPath, GPU):
     sys.path.insert(0, esrgan)
     from basicsr.archs.rrdbnet_arch import RRDBNet
     from realesrgan import RealESRGANer
-    if not model or not os.path.isfile(model):
+    if not model or not(os.path.isfile(model) or os.path.isfile(model + "2x_Pkmncards_PP_Dubu_RealESRGAN.pth")):
         print("model not found:" + str(model))
         return
 
@@ -43,12 +43,12 @@ def exportImages(esrgan, model, input, outputPath):
         scale=2,
         model_path=model,
         dni_weight=None,
-        model=RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=128, num_block=23, num_grow_ch=32, scale=2),#todo investigate
+        model=RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=128, num_block=23, num_grow_ch=32, scale=2),
         tile=0,
         tile_pad=10,
         pre_pad=0,
         half=False,
-        gpu_id=None) #todo add the ability to not use CPU mode
+        gpu_id=GPU)
 
     if os.path.isfile(input):
         processFile(upsampler, input, outputPath)
@@ -64,13 +64,15 @@ def processArgs():
     output = os.path.join(os.getcwd(), "output")
     esrgan = None
     model = None
+    GPU = None
 
     msg = "Improves old pokemon card scans"
     parser = argparse.ArgumentParser(description=msg)
     parser.add_argument("-i", "--Input", help="Set Input")
     parser.add_argument("-o", "--Output", help="Set Output")
     parser.add_argument("-e", "--ESRGAN", help="Set ESRGAN")
-    parser.add_argument("-m", "--Model", help="Set model")
+    parser.add_argument("-m", "--Model", help="Set model folder")
+    parser.add_argument("-g", "--GPU", help="set GPU by id. default None (CPU mode)")
 
     args = parser.parse_args()
 
@@ -82,12 +84,14 @@ def processArgs():
         esrgan = args.ESRGAN
     if args.Model:
         model = args.Model
+    if args.GPU:
+        GPU = args.GPU
 
-    return esrgan, model, input, output,
+    return esrgan, model, input, output, GPU
 
 def main():
-    esrgan, model, input, outputPath = processArgs()
-    exportImages(esrgan, model, input, outputPath)
+    esrgan, model, input, outputPath, GPU = processArgs()
+    exportImages(esrgan, model, input, outputPath, GPU)
 
 
 if __name__ == '__main__':

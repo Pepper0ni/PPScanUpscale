@@ -26,13 +26,117 @@ ELEC_VAL_VAR = 1 #sets the variance in value for the adaptive border detection t
 CORNER_FIX_STREGNTH = 5 #sets how large an area, and how strong a blur, to use for the corner fixing
 timesRun = 0
 
+def weightedAverageMatrix(img1, img2, mask, max):
+    invMask = np.abs(np.subtract(mask, max))
+    multi1 = np.multiply(mask, img1)
+    multi2 = np.multiply(invMask, img2)
+    return np.array(np.divide(np.add(multi1, multi2), max), dtype=np.uint8)
+
+def smoothBorders(src, top, bottom, left, right, blur, cb):
+    if cb:
+        borderImgs = [[], [], [], []]
+        masks = [[], [], [], []]
+        cornerMasks = [[], [], [], []]
+        cornerImgs = [[], [], [], []]
+        finalCorners = [[], [], [], []]
+        top = top - cb[0]
+        bottom = bottom - cb[1]
+        left = left - cb[2]
+        right = right - cb[3]
+        caps = [0, 0, 0, 0]
+
+        borderImgs[0] = trimImage(src, 0, top, 0, src.shape[1])
+        borderImgs[1] = trimImage(src, src.shape[0]-bottom, src.shape[0], 0, src.shape[1])
+        borderImgs[2] = trimImage(src, 0, src.shape[0], 0, left)
+        borderImgs[3] = trimImage(src, 0, src.shape[0], src.shape[1]-right, src.shape[1])
+
+        maskRow = np.tile(np.array([[[1, 1, 1]], [[2, 2, 2]], [[3, 3, 3]]], dtype=np.int16), (1, borderImgs[0].shape[1], 1))
+        invMaskRow = np.tile(np.array([[[3, 3, 3]], [[2, 2, 2]], [[1, 1, 1]]], dtype=np.int16), (1, borderImgs[0].shape[1], 1))
+        maskCol = np.tile(np.array([[1, 1, 1], [2, 2, 2], [3, 3, 3]], dtype=np.int16).transpose(), (borderImgs[2].shape[0], 1, 1))
+        invMaskCol = np.tile(np.array([[3, 3, 3], [2, 2, 2], [1, 1, 1]], dtype=np.int16).transpose(), (borderImgs[2].shape[0], 1, 1))
+
+        masks[0] = np.full(shape=(borderImgs[0].shape[0] - 3, borderImgs[0].shape[1], 3), fill_value=0, dtype=np.int16)
+        masks[0] = np.row_stack((masks[0], maskRow))
+        masks[0] = pasteImage(masks[0], np.zeros((3, left, 3), np.int16), 0, top-3)
+        masks[0] = pasteImage(masks[0], np.zeros((3, right, 3), np.int16), masks[0].shape[1]-right, top-3)
+
+        masks[1] = np.full(shape=(borderImgs[1].shape[0] - 3, borderImgs[1].shape[1], 3), fill_value=0, dtype=np.int16)
+        masks[1] = np.row_stack((invMaskRow, masks[1]))
+        masks[1] = pasteImage(masks[1], np.zeros((3, left, 3), np.int16), 0, 0)
+        masks[1] = pasteImage(masks[1], np.zeros((3, right, 3), np.int16), masks[1].shape[1]-right, 0)
+
+        masks[2] = np.full(shape=(borderImgs[2].shape[0], borderImgs[2].shape[1]-3, 3), fill_value=0, dtype=np.int16)
+        masks[2] = np.column_stack((masks[2], maskCol))
+        masks[2] = pasteImage(masks[2], np.zeros((top, 3, 3), np.int16), left-3, 0)
+        masks[2] = pasteImage(masks[2], np.zeros((bottom, 3, 3), np.int16), left-3, masks[2].shape[0]-bottom)
+
+        masks[3] = np.full(shape=(borderImgs[3].shape[0], borderImgs[3].shape[1]-3, 3), fill_value=0, dtype=np.int16)
+        masks[3] = np.column_stack((invMaskCol, masks[3]))
+        masks[3] = pasteImage(masks[3], np.zeros((top, 3, 3), np.int16), 0, 0)
+        masks[3] = pasteImage(masks[3], np.zeros((bottom, 3, 3), np.int16), 0, masks[3].shape[0]-bottom)
+
+        trimmed = sharpen(trimImage(src, top, src.shape[0] - bottom, left, src.shape[1]-right), 3, 0.28, 1)
+        count = 0
+        for border in borderImgs:
+            blurred = cv.blur(np.array(border, dtype=np.int16), (blur[0], blur[1]))
+            borderImgs[count] = weightedAverageMatrix(border, blurred, masks[count], 4)
+            count += 1
+
+        cornerImgs[0] = [trimImage(borderImgs[0], 0, borderImgs[0].shape[0], 0, left),
+                         trimImage(borderImgs[2], 0, top, 0, borderImgs[2].shape[1])]
+
+        cornerImgs[1] = [trimImage(borderImgs[0], 0, borderImgs[0].shape[0], borderImgs[0].shape[1]-right, borderImgs[0].shape[1]),
+                         trimImage(borderImgs[3], 0, top, 0, borderImgs[3].shape[1])]
+
+        cornerImgs[2] = [trimImage(borderImgs[1], 0, borderImgs[1].shape[0], 0, left),
+                         trimImage(borderImgs[2], borderImgs[2].shape[0] - bottom, borderImgs[2].shape[0], 0, borderImgs[2].shape[1])]
+
+        cornerImgs[3] = [trimImage(borderImgs[1], 0, borderImgs[1].shape[0], borderImgs[1].shape[1]-right, borderImgs[1].shape[1]),
+                         trimImage(borderImgs[3], borderImgs[3].shape[0] - bottom, borderImgs[3].shape[0], 0, borderImgs[3].shape[1])]
+
+
+        lowest = min(top, left)
+        caps[0] = lowest * 2
+        cornerMasks[0] = np.fromfunction(lambda i, j: np.minimum(caps[0], np.maximum(0, np.add(lowest, np.subtract(
+            (np.subtract(top-1, i)), np.subtract(left-1, j))))), (top, left), dtype=np.int16)[:, :, np.newaxis]
+
+        lowest = min(top, right)
+        caps[1] = lowest * 2
+        cornerMasks[1] = np.fromfunction(lambda i, j: np.minimum(caps[1], np.maximum(0, np.add(lowest, np.subtract(
+            (np.subtract(top-1, i)), j)))), (top, right), dtype=np.int16)[:, :, np.newaxis]
+
+        lowest = min(bottom, left)
+        caps[2] = lowest * 2
+        cornerMasks[2] = np.fromfunction(lambda i, j: np.minimum(caps[2], np.maximum(0, np.add(lowest, np.subtract(
+            i, np.subtract(left-1, j))))), (bottom, left), dtype=np.int16)[:, :, np.newaxis]
+
+        lowest = min(bottom, right)
+        caps[3] = lowest * 2
+        cornerMasks[3] = np.fromfunction(lambda i, j: np.minimum(caps[3], np.maximum(0, np.add(lowest, np.subtract(
+            i, j)))), (bottom, right), dtype=np.int16)[:, :, np.newaxis]
+
+        count = 0
+        for corner in cornerImgs:
+            finalCorners[count] = weightedAverageMatrix(corner[0], corner[1], cornerMasks[count], caps[count])
+            count += 1
+
+        borderImgs[0] = pasteImage(pasteImage(borderImgs[0], finalCorners[0], 0, 0), finalCorners[1], borderImgs[0].shape[1]-right, 0)
+        borderImgs[1] = pasteImage(pasteImage(borderImgs[1], finalCorners[2], 0, 0), finalCorners[3],
+                                   borderImgs[1].shape[1] - right, 0)
+        borderImgs[2] = trimImage(borderImgs[2], top, borderImgs[2].shape[0] - bottom, 0, borderImgs[2].shape[1])
+        borderImgs[3] = trimImage(borderImgs[3], top, borderImgs[3].shape[0] - bottom, 0, borderImgs[3].shape[1])
+
+        return cv.vconcat([borderImgs[0], cv.hconcat([borderImgs[2], trimmed, borderImgs[3]]), borderImgs[1]])
+    else:
+        return sharpen(src, 3, 0.28, 1)
+
 
 def sharpen(src, ksize, amount, iter):
     hsvSrc = cv.cvtColor(src, cv.COLOR_BGR2HSV_FULL)
     h, s, v = cv.split(hsvSrc)
     for _ in range(iter):
         v = img_as_ubyte(unsharp_mask(v, ksize, amount))
-    return  cv.cvtColor(cv.merge([h, s, v]), cv.COLOR_HSV2BGR_FULL)
+    return cv.cvtColor(cv.merge([h, s, v]), cv.COLOR_HSV2BGR_FULL)
 
 def getMidpoint(line): #get the midpoint of a line
     return [(line[0][0] + line[1][0]) / 2, (line[0][1] + line[1][1]) / 2]
@@ -124,7 +228,10 @@ def pasteImage(base, sprite, posX, posY): #paste 1 image into another in the spe
     return base
 
 def addBlurredExtendBorder(src, top, bottom, left, right, blur): #add an extend border with a blur effect to smooth out varience
-    blurred = cv.blur(src, (blur[0], blur[1]), 0)
+    #blurred = cv.GaussianBlur(src, (blur[0], blur[1]), 2)
+    #blurred = cv.blur(src, (blur[0], blur[1]))
+    blurred = cv.copyMakeBorder(src, blur[1], blur[1], blur[0], blur[0], cv.BORDER_WRAP)
+    blurred = trimImage(cv.blur(blurred, (blur[0], blur[1])), blur[1], blurred.shape[0]-blur[1], blur[0], blurred.shape[1]-blur[0])
     blurred = cv.copyMakeBorder(blurred, round(top), round(bottom), round(left), round(right), cv.BORDER_REPLICATE)
     blurred = pasteImage(blurred, src, left, top)
     return blurred
@@ -500,7 +607,7 @@ def drawBox(img, upLeft, upMid, upRight, leftMid, rightMid, lowLeft, lowMid, low
     return img
 
 
-def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, filter, blur, debug=False, show=False):
+def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, filter, blur, cb, debug=False, show=False):
     src = cv.imread(cv.samples.findFile(baseImg))
     if src is None:
         print('Base Image at ' + baseImg + ' Not Found, skipping')
@@ -551,7 +658,7 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, filte
     offsetY = Decimal(round(src.shape[1] * extraSpace[1]))
 
     if show and not manual:
-        edges = drawBox(src, upLeft, upMid, upRight, leftMid, rightMid, lowLeft, lowMid, lowRight)
+        edges = drawBox(np.copy(src), upLeft, upMid, upRight, leftMid, rightMid, lowLeft, lowMid, lowRight)
         cv.imshow("4 main lines", edges)
 
     upLeft = [upLeft[0] + offsetX, upLeft[1] + offsetY]
@@ -652,11 +759,13 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, filte
     if any(side < 0 for side in adjustNeeded):
         warped = warped[max(0, adjustNeeded[0] * -1):len(warped) + min(0, adjustNeeded[1]),
                  max(0, adjustNeeded[2] * -1):len(warped[0]) + min(0, adjustNeeded[3])]
+
     if any(side > 0 for side in adjustNeeded):
-        warped = addBlurredExtendBorder(warped, max(0, border[0]), max(0, border[1]), max(0, border[2]),
-                                        max(0, border[3]), blur)
+        warped = addBlurredExtendBorder(warped, max(0, adjustNeeded[0]), max(0, adjustNeeded[1]), max(0, adjustNeeded[2]),
+                                        max(0, adjustNeeded[3]), blur)
+
+    warped = smoothBorders(warped, round(border[0]), round(border[1]), round(border[2]), round(border[3]), blur, cb)
     #apply an alpha mask if provided, to make the corners
-    warped = cv.cvtColor(sharpen(warped, 3, 0.28, 1), cv.COLOR_BGR2BGRA)
     if mask:
         warped = maskcorners.processMask(warped, mask)
     if show:
@@ -675,12 +784,12 @@ def processMultiArg(arg, numNeeded, decimal):
         else:
             argList.append(int(num))
     if len(argList) != numNeeded:
-        raise ValueError("EdgeFiltering must have exactly 4 numbers")
+        raise ValueError("var must have exactly" + str(numNeeded) + "numbers")
     return argList
 
 
 def processArgs(inputText):
-    input = None
+    input = os.path.join(os.getcwd(), "input")
     clean = None
     output = os.path.join(os.getcwd(), "output")
     border = None
@@ -693,6 +802,7 @@ def processArgs(inputText):
     manual = False
     filter = False
     blur = [25, 25]
+    cb = None
 
     msg = "Improves old pokemon card scans"
     parser = argparse.ArgumentParser(description=msg)
@@ -718,6 +828,7 @@ def processArgs(inputText):
     parser.add_argument("-ma", "--Manual", help="Detect the edges manually. default: False")
     parser.add_argument("-f", "--Filter", help="Bring up the filter menu to customise the filter used. default: False")
     parser.add_argument("-bb", "--BorderBlur", help="how much to blur the border, as so x,y. default: 25,25")
+    parser.add_argument("-cb", "--CleanBorder", help="avoid sharpening the border, cleaning it instead. enable by setting tolerance like so t,b,l,r.")
 
     args = parser.parse_args()
 
@@ -747,17 +858,19 @@ def processArgs(inputText):
         filter = args.Filter
     if args.BorderBlur:
         blur = processMultiArg(args.BorderBlur, 2, False)
-    return input, clean, output, border, trim, edge, res, mask, manual, filter, blur, debug, show
+    if args.CleanBorder:
+        cb = processMultiArg(args.CleanBorder, 4, False)
+    return input, clean, output, border, trim, edge, res, mask, manual, filter, blur, cb, debug, show
 
 
-def resolveImage(input, clean, output, border, trim, edge, res, mask, manual, filter, blur, debug, show):
+def resolveImage(input, clean, output, border, trim, edge, res, mask, manual, filter, blur, cb, debug, show):
     print("processing " + input)
-    image = processImage(input, clean, border, trim, edge, res, mask, manual, filter, blur, debug, show)
+    image = processImage(input, clean, border, trim, edge, res, mask, manual, filter, blur, cb, debug, show)
     if image is not None:
         cv.imwrite(output, image)
 
 
-def processFolder(input, clean, output, border, trim, edge, res, mask, manual, filter, blur, debug, show):
+def processFolder(input, clean, output, border, trim, edge, res, mask, manual, filter, blur, cb, debug, show):
     with suppress(FileExistsError):
         os.mkdir(output)
     with os.scandir(input) as entries:
@@ -768,19 +881,17 @@ def processFolder(input, clean, output, border, trim, edge, res, mask, manual, f
             if clean:
                 cleanPath = os.path.join(clean, entry.name)
             if os.path.isfile(inputPath) and entry.name != "Place Images Here":
-                resolveImage(inputPath, cleanPath, outputPath, border, trim, edge, res, mask, manual, filter, blur, debug, show)
+                resolveImage(inputPath, cleanPath, outputPath, border, trim, edge, res, mask, manual, filter, blur, cb, debug, show)
             elif os.path.isdir(inputPath):
-                processFolder(inputPath, cleanPath, outputPath, border, trim, edge, res, mask, manual, filter, blur, debug, show)
+                processFolder(inputPath, cleanPath, outputPath, border, trim, edge, res, mask, manual, filter, blur, cb, debug, show)
 
 
 def main():
-    input, clean, output, border, trim, edge, res, mask, manual, filter, blur, debug, show = processArgs("folder")
-    if not input:
-        input = os.path.join(os.getcwd(), "input")
+    input, clean, output, border, trim, edge, res, mask, manual, filter, blur, cb, debug, show = processArgs("folder")
     if os.path.isfile(input):
-        resolveImage(input, clean, output, border, trim, edge, res, mask, manual, filter, blur, debug, show)
+        resolveImage(input, clean, output, border, trim, edge, res, mask, manual, filter, blur, cb, debug, show)
     elif os.path.isdir(input):
-        processFolder(input, clean, output, border, trim, edge, res, mask, manual, filter, blur, debug, show)
+        processFolder(input, clean, output, border, trim, edge, res, mask, manual, filter, blur, cb, debug, show)
     else:
         print("Input file not found.")
 
