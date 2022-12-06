@@ -119,11 +119,14 @@ def processArgs():
     return input, output, model, esrgan, GPU, ncnn
 
 def resolveImage(input, output, upsampler, ncnn):
-    print("processing " + input)
-    output = re.sub("jpg$", "png", output)
-    image = processImage(input, upsampler, ncnn)
-    if image is not None:
-        cv.imwrite(output, image)
+    if os.path.isfile(output):
+        print("skipping " + input + ": already exists")
+    else:
+        print("processing " + input)
+        output = re.sub("jpg$", "png", output)
+        image = processImage(input, upsampler, ncnn)
+        if image is not None:
+            cv.imwrite(output, image)
 
 
 def processFolder(input, output, upsampler, ncnn):
