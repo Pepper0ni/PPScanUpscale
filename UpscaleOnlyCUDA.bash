@@ -8,6 +8,6 @@ python3 "$2"upscale.py ./models/1x_artifacts_dithering_alsa.pth -i ./denoise/ -o
 
 rm -r ./denoise
 
-python3 upscaleimage.py -i ./dedither/ -o ./upscaled/ -m ./models/2x_Pkmncards_PP_Dubu_RealESRGAN.pth -e "$1" -g 0
+python3 upscaleimage.py -i ./dedither/ -o ./upscaled/ -m ./models/ -e "$1"
 
 rm -r ./dedither

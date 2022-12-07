@@ -18,9 +18,9 @@ OVERFLOW = 16
 def trimImage(img, fromTop, newBot, fromLeft, newRight): #crop the image based on the supplied values
     return np.copy(img[fromTop:newBot, fromLeft:newRight])
 
-def processImage(input, upsampler, ncnn):
+def processImage(input, upsampler, ncnnOn):
     img = cv.imread(input)
-    if ncnn:
+    if ncnnOn:
         xSize = round(img.shape[1] / 2)
         ySize = round(img.shape[0] / 2)
 
@@ -60,7 +60,8 @@ def processImage(input, upsampler, ncnn):
                 ret, dedither = ditherEx.extract("output")
 
                 # Transpose the output from `c, h, w` to `h, w, c` and put it back in 0-255 range
-                outputs.append(np.array(dedither).transpose(1, 2, 0) * 255)
+                floatImg = np.array(dedither).transpose(1, 2, 0) * 255
+                outputs.append(floatImg)
                 #print(len(outputs)-1)
                 #print(outputs[len(outputs)-1].shape)
             except:
@@ -78,10 +79,11 @@ def processImage(input, upsampler, ncnn):
         ]
         top = cv.hconcat([trimOutputs[0], trimOutputs[2]])
         bot = cv.hconcat([trimOutputs[1], trimOutputs[3]])
-        img = cv.cvtColor(cv.vconcat([top, bot]), cv.COLOR_RGB2BGR)
+        img = cv.cvtColor(cv.normalize(cv.vconcat([top, bot]), None, 0, 255, cv.NORM_MINMAX, cv.CV_8U), cv.COLOR_RGB2BGR)
     if upsampler:
-        img, _ = upsampler.enhance(cv.cvtColor(img, cv.COLOR_BGR2RGB), outscale=2)
-        img = cv.cvtColor(img, cv.COLOR_RGB2BGR)
+        cv.waitKey()
+        img, _ = upsampler.enhance(cv.cvtColor(img, cv.COLOR_BGR2RGBA), outscale=2)
+        img = cv.cvtColor(img, cv.COLOR_RGBA2BGR)
     return img
     
 def processArgs():
@@ -90,7 +92,7 @@ def processArgs():
     esrgan = None
     model = os.path.join(os.getcwd(), "models")
     GPU = None
-    ncnn = False
+    ncnnOn = False
 
     msg = "Improves old pokemon card scans"
     parser = argparse.ArgumentParser(description=msg)
@@ -114,22 +116,22 @@ def processArgs():
     if args.GPU:
         GPU = args.GPU
     if args.ncnn:
-        ncnn = args.ncnn
+        ncnnOn = args.ncnn
 
-    return input, output, model, esrgan, GPU, ncnn
+    return input, output, model, esrgan, GPU, ncnnOn
 
-def resolveImage(input, output, upsampler, ncnn):
+def resolveImage(input, output, upsampler, ncnnOn):
+    output = re.sub("jpg$", "png", output)
     if os.path.isfile(output):
         print("skipping " + input + ": already exists")
     else:
         print("processing " + input)
-        output = re.sub("jpg$", "png", output)
-        image = processImage(input, upsampler, ncnn)
+        image = processImage(input, upsampler, ncnnOn)
         if image is not None:
             cv.imwrite(output, image)
 
 
-def processFolder(input, output, upsampler, ncnn):
+def processFolder(input, output, upsampler, ncnnOn):
     with suppress(FileExistsError):
         os.mkdir(output)
     with os.scandir(input) as entries:
@@ -137,13 +139,13 @@ def processFolder(input, output, upsampler, ncnn):
             inputPath = os.path.join(input, entry.name)
             outputPath = os.path.join(output, entry.name)
             if os.path.isfile(inputPath) and entry.name != "Place Images Here":
-                resolveImage(inputPath, outputPath, upsampler, ncnn)
+                resolveImage(inputPath, outputPath, upsampler, ncnnOn)
             elif os.path.isdir(inputPath):
-                processFolder(inputPath, outputPath, upsampler, ncnn)
+                processFolder(inputPath, outputPath, upsampler, ncnnOn)
 
 
 def main():
-    input, output, model, esrgan, GPU, ncnn = processArgs()
+    input, output, model, esrgan, GPU, ncnnOn = processArgs()
     noiseNet.load_param(os.path.join(model, "1x_ISO_denoise_v1.param"))
     noiseNet.load_model(os.path.join(model, "1x_ISO_denoise_v1.bin"))
     ditherNet.load_param(os.path.join(model, "1x_artifacts_dithering_alsa.param"))
@@ -167,9 +169,9 @@ def main():
             half=False,
             gpu_id=GPU)
     if os.path.isfile(input):
-        resolveImage(input, output, upsampler, ncnn)
+        resolveImage(input, output, upsampler, ncnnOn)
     elif os.path.isdir(input):
-        processFolder(input, output, upsampler, ncnn)
+        processFolder(input, output, upsampler, ncnnOn)
     else:
         print("Input file not found.")
 
