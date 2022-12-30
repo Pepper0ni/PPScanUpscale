@@ -6,6 +6,10 @@ from contextlib import suppress
 from decimal import Decimal
 import math
 
+LUMA_BLUE = 0.0722#0.11
+LUMA_RED = 0.2126#0.3
+LUMA_GREEN = 0.7152#0.59
+
 def trimImage(img, fromTop, newBot, fromLeft, newRight): #crop the image based on the supplied values
     return img[fromTop:newBot, fromLeft:newRight]
 
@@ -17,92 +21,208 @@ def argmedian(x):
     print(x)
     return np.argpartition(x, 1, 2)
 
+# def BGR2HSY(img):
+#     print(img[287,287])
+#     B, G, R = cv.split(img.astype(float))
+#     H = np.zeros_like(B)
+#     S = np.copy(H)
+#
+#     condMask = np.logical_and(np.greater_equal(R, G), np.greater_equal(G, B))
+#     np.subtract(R, B, S, where=condMask)
+#     condMask = np.logical_and(condMask, S)
+#     np.divide((G-B)*60, S, H, where=condMask)
+#
+#     condMask = np.logical_and(np.greater(G, R), np.greater_equal(R, B))
+#     np.subtract(G, B, S, where=condMask)
+#     np.divide((G - R)*60, S, H, where=condMask)
+#     np.add(H, 60, H, where=condMask)
+#
+#     condMask = np.logical_and(np.greater_equal(G, B), np.greater(B, R))
+#     np.subtract(G, R, S, where=condMask)
+#     np.divide((B-R)*60, S, H, where=condMask)
+#     np.add(H, 120, H, where=condMask)
+#
+#     condMask = np.logical_and(np.greater(B, G), np.greater(G, R))
+#     np.subtract(B, R, S, where=condMask)
+#     np.divide((B-G)*60, S, H, where=condMask)
+#     np.add(H, 180, H, where=condMask)
+#
+#     condMask = np.logical_and(np.greater(B, R), np.greater_equal(R, G))
+#     np.subtract(B, G, S, where=condMask)
+#     np.divide((R-G)*60, S, H, where=condMask)
+#     np.add(H, 240, H, where=condMask)
+#
+#     condMask = np.logical_and(np.greater_equal(R, B), np.greater(B, G))
+#     np.subtract(R, G, S, where=condMask)
+#     np.divide((R-B)*60, S, H, where=condMask)
+#     np.add(H, 300, H, where=condMask)
+#
+#     Y = (B * 0.11) + (G * 0.59) + (R * 0.3)
+#     H %= 360
+#     return cv.merge([H, S, Y])
+#
+# def HSY2BGR(img):
+#     print(img)
+#     print(img[287,287])
+#     H, S, Y = cv.split(img)
+#     B = np.zeros_like(H)
+#     G = np.zeros_like(H)
+#     R = np.zeros_like(H)
+#     K = np.multiply(S, (H % 60) / 60)
+#     b = 0.11
+#     g = 0.59
+#     r = 0.3
+#
+#     condMask = np.less(H, 60)
+#     np.subtract(Y, r * S + g * K, B, where=condMask)
+#     np.add(B, S, R, where=condMask)
+#     np.add(B, K, G, where=condMask)
+#     print(cv.merge([B, G, R])[287,287])
+#     condMask = np.logical_and(np.greater_equal(H, 60), np.less(H, 120))
+#     np.add(Y, b * S + r * K, G, where=condMask)
+#     np.subtract(G, S, B, where=condMask)
+#     np.subtract(G, K, R, where=condMask)
+#     print(cv.merge([B, G, R])[287,287])
+#     condMask = np.logical_and(np.greater_equal(H, 120), np.less(H, 180))
+#     np.subtract(Y, g * S + b * K, R, where=condMask)
+#     np.add(R, S, G, where=condMask)
+#     np.add(R, K, B, where=condMask)
+#     print(cv.merge([B, G, R])[287,287])
+#     condMask = np.logical_and(np.greater_equal(H, 180), np.less(H, 240))
+#     np.add(Y, r * S + g * K, B, where=condMask)
+#     np.subtract(B, S, R, where=condMask)
+#     np.subtract(B, K, G, where=condMask)
+#     print(cv.merge([B, G, R])[287,287])
+#     condMask = np.logical_and(np.greater_equal(H, 240), np.less(H, 300))
+#     np.subtract(Y, b * S + r * K, G, where=condMask)
+#     np.add(G, S, B, where=condMask)
+#     np.add(G, K, R, where=condMask)
+#     print(cv.merge([B, G, R])[287,287])
+#     condMask = np.greater_equal(H, 300)
+#     np.add(Y, g * S + b * K, R, where=condMask)
+#     np.subtract(R, S, G, where=condMask)
+#     np.subtract(R, K, B, where=condMask)
+#     RGB = cv.merge([B, G, R])
+#
+#     print((cv.normalize(RGB, None, 0, 255, cv.NORM_MINMAX, cv.CV_8U)[287,287]))
+#
+#     return cv.normalize(RGB, None, 0, 255, cv.NORM_MINMAX, cv.CV_8U)
+
 def BGR2HSY(img):
-    print(img[287,287])
-    B, G, R = cv.split(img.astype(float))
+    print(img[542, 279])
+    B, G, R = cv.split(img.astype(float)/255)
     H = np.zeros_like(B)
+    C = np.copy(H)
     S = np.copy(H)
+    maxS = np.full_like(H, 0.5)
+    Ya = np.copy(H)
+    rR = np.multiply(R, LUMA_RED)
+    bB = np.multiply(B, LUMA_BLUE)
+    gG = np.multiply(G, LUMA_GREEN)
+    Y = rR + bB + gG
+    print(Y[542, 279])
 
     condMask = np.logical_and(np.greater_equal(R, G), np.greater_equal(G, B))
-    np.subtract(R, B, S, where=condMask)
-    condMask = np.logical_and(condMask, S)
-    np.divide((G-B)*60, S, H, where=condMask)
+    np.subtract(R, B, C, where=condMask)
+    condMask = np.logical_and(condMask, C)
+    np.divide(np.subtract(G, B), C, H, where=condMask)
 
-    condMask = np.logical_and(np.greater(G, R), np.greater_equal(R, B))
-    np.subtract(G, B, S, where=condMask)
-    np.divide((G - R)*60, S, H, where=condMask)
-    np.add(H, 60, H, where=condMask)
+    condMask = np.logical_and(np.greater(G, R), np.greater_equal(G, B))
+    np.subtract(G, np.minimum(B, R), C, where=condMask)
+    condMask = np.logical_and(condMask, C)
+    np.divide(np.subtract(B, R), C, H, where=condMask)
+    np.add(H, 2, H, where=condMask)
 
-    condMask = np.logical_and(np.greater_equal(G, B), np.greater(B, R))
-    np.subtract(G, R, S, where=condMask)
-    np.divide((B-R)*60, S, H, where=condMask)
-    np.add(H, 120, H, where=condMask)
+    condMask = np.logical_and(np.greater(B, R), np.greater(B, G))
+    np.subtract(B, np.minimum(G, R), C, where=condMask)
+    condMask = np.logical_and(condMask, C)
+    np.divide(np.subtract(R, G), C, H, where=condMask)
+    np.add(H, 4, H, where=condMask)
 
-    condMask = np.logical_and(np.greater(B, G), np.greater(G, R))
-    np.subtract(B, R, S, where=condMask)
-    np.divide((B-G)*60, S, H, where=condMask)
-    np.add(H, 180, H, where=condMask)
+    condMask = np.logical_and(np.greater_equal(R, B), np.greater_equal(B, G))
+    np.subtract(R, G, C, where=condMask)
+    condMask = np.logical_and(condMask, C)
+    np.divide(np.subtract(G, B), C, H, where=condMask)
+    np.add(H, 6, H, where=condMask)
 
-    condMask = np.logical_and(np.greater(B, R), np.greater_equal(R, G))
-    np.subtract(B, G, S, where=condMask)
-    np.divide((R-G)*60, S, H, where=condMask)
-    np.add(H, 240, H, where=condMask)
+    np.add(LUMA_RED, np.multiply(LUMA_GREEN, H % 6), maxS, where=np.greater_equal(H, 0))#np.logical_or(np.greater_equal(H, 6), np.less(H, 1)))
+    np.subtract(LUMA_RED + LUMA_GREEN, np.multiply(LUMA_RED, H - 1), maxS, where=np.greater_equal(H, 1))
+    np.add(LUMA_GREEN, np.multiply(LUMA_BLUE, H - 2), maxS, where=np.greater_equal(H, 2))
+    np.subtract(LUMA_GREEN + LUMA_BLUE, np.multiply(LUMA_GREEN, H - 3), maxS, where=np.greater_equal(H, 3))
+    np.add(LUMA_BLUE, np.multiply(LUMA_RED, H - 4), maxS, where=np.greater_equal(H, 4))
+    np.subtract(LUMA_RED + LUMA_BLUE, np.multiply(LUMA_BLUE, H - 5), maxS, where=np.logical_and(np.greater_equal(H, 5), np.less_equal(H, 6)))
 
-    condMask = np.logical_and(np.greater_equal(R, B), np.greater(B, G))
-    np.subtract(R, G, S, where=condMask)
-    np.divide((R-B)*60, S, H, where=condMask)
-    np.add(H, 300, H, where=condMask)
+    condMask = np.less_equal(Y, maxS)
+    np.multiply(np.divide(Y, maxS, where=np.logical_and(C, condMask)), 0.5, Ya, where=np.logical_and(C, condMask))
+    np.add(np.divide(Y - maxS, (1 - maxS)*2, where=np.logical_and(C, np.logical_not(condMask))), 0.5, Ya, where=np.logical_and(C, np.logical_not(condMask)))
+    #np.add(Ya, 0.5, Ya, where=np.logical_and(C, np.logical_not(condMask)))
 
-    Y = (B * 0.11) + (G * 0.59) + (R * 0.3)
-    H %= 360
-    return cv.merge([H, S, Y])
+    np.divide(C, Ya*2, S, where=np.logical_and(C, condMask))
+    np.divide(C, 2-(Ya*2), S, where=np.logical_and(C, np.logical_not(condMask)))
+    print(S[542, 279])
+
+    return cv.merge([H, np.maximum(S, 0), np.maximum(Y, 0)])
 
 def HSY2BGR(img):
-    print(img)
-    print(img[287,287])
     H, S, Y = cv.split(img)
-    B = np.zeros_like(H)
-    G = np.zeros_like(H)
-    R = np.zeros_like(H)
-    K = np.multiply(S, (H % 60) / 60)
-    b = 0.11
-    g = 0.59
-    r = 0.3
+    print(img[542, 279])
+    maxS = np.zeros_like(H)
+    B = np.copy(maxS)
+    G = np.copy(maxS)
+    R = np.copy(maxS)
+    Ya = np.copy(maxS)
+    C = np.copy(maxS)
+    X = np.copy(maxS)
+    M = np.copy(maxS)
 
-    condMask = np.less(H, 60)
-    np.subtract(Y, r * S + g * K, B, where=condMask)
-    np.add(B, S, R, where=condMask)
-    np.add(B, K, G, where=condMask)
-    print(cv.merge([B, G, R])[287,287])
-    condMask = np.logical_and(np.greater_equal(H, 60), np.less(H, 120))
-    np.add(Y, b * S + r * K, G, where=condMask)
-    np.subtract(G, S, B, where=condMask)
-    np.subtract(G, K, R, where=condMask)
-    print(cv.merge([B, G, R])[287,287])
-    condMask = np.logical_and(np.greater_equal(H, 120), np.less(H, 180))
-    np.subtract(Y, g * S + b * K, R, where=condMask)
-    np.add(R, S, G, where=condMask)
-    np.add(R, K, B, where=condMask)
-    print(cv.merge([B, G, R])[287,287])
-    condMask = np.logical_and(np.greater_equal(H, 180), np.less(H, 240))
-    np.add(Y, r * S + g * K, B, where=condMask)
-    np.subtract(B, S, R, where=condMask)
-    np.subtract(B, K, G, where=condMask)
-    print(cv.merge([B, G, R])[287,287])
-    condMask = np.logical_and(np.greater_equal(H, 240), np.less(H, 300))
-    np.subtract(Y, b * S + r * K, G, where=condMask)
-    np.add(G, S, B, where=condMask)
-    np.add(G, K, R, where=condMask)
-    print(cv.merge([B, G, R])[287,287])
-    condMask = np.greater_equal(H, 300)
-    np.add(Y, g * S + b * K, R, where=condMask)
-    np.subtract(R, S, G, where=condMask)
-    np.subtract(R, K, B, where=condMask)
-    RGB = cv.merge([B, G, R])
+    condMask1 = np.logical_or(np.less(H, 1), np.greater_equal(H, 6))
+    np.add(LUMA_RED, LUMA_GREEN*H, maxS, where=condMask1)
 
-    print((cv.normalize(RGB, None, 0, 255, cv.NORM_MINMAX, cv.CV_8U)[287,287]))
+    condMask2 = np.logical_and(np.greater_equal(H, 1), np.less(H, 2))
+    np.subtract(LUMA_RED+LUMA_GREEN, LUMA_RED * (H - 1), maxS, where=condMask2)
 
-    return cv.normalize(RGB, None, 0, 255, cv.NORM_MINMAX, cv.CV_8U)
+    condMask3 = np.logical_and(np.greater_equal(H, 2), np.less(H, 3))
+    np.add(LUMA_GREEN, LUMA_BLUE * (H - 2), maxS, where=condMask3)
+
+    condMask4 = np.logical_and(np.greater_equal(H, 3), np.less(H, 4))
+    np.subtract(LUMA_GREEN+LUMA_BLUE, LUMA_GREEN * (H - 3), maxS, where=condMask4)
+    print(maxS[542, 279])
+
+    condMask5 = np.logical_and(np.greater_equal(H, 4), np.less(H, 5))
+    np.add(LUMA_BLUE, LUMA_RED * (H - 4), maxS, where=condMask5)
+
+    condMask6 = np.logical_or(np.greater_equal(H, 5), np.less(H, 0))
+    np.subtract(LUMA_BLUE + LUMA_RED, LUMA_BLUE * (H - 5), maxS, where=condMask6)
+
+    YmaxSCond = np.less(Y, maxS)
+    np.multiply(np.divide(Y, maxS, where=YmaxSCond), 0.5, Ya, where=YmaxSCond)
+    np.multiply(S * 2, Ya, C, where=YmaxSCond)
+    np.multiply(np.divide(Y, maxS, where=np.logical_and(condMask1, np.equal(Y, maxS))), 0.5, Ya, where=np.logical_and(condMask1, np.equal(Y, maxS)))
+
+    np.multiply(np.divide(Y - maxS, 1 - maxS, where=np.logical_not(YmaxSCond)), 0.5, Ya, where=np.logical_not(YmaxSCond))
+    np.add(Ya, 0.5, Ya, where=np.logical_not(YmaxSCond))
+    np.multiply(S, 2 - (Ya * 2), C, where=np.logical_not(YmaxSCond))
+    print(C[542, 279])
+    np.multiply(1 - np.abs((H % 2) - 1), C, X)
+    print(X[542, 279])
+
+    np.putmask(R, np.logical_or(condMask1, condMask6), C)
+    np.putmask(G, np.logical_or(condMask2, condMask3), C)
+    np.putmask(B, np.logical_or(condMask4, condMask5), C)
+
+    np.putmask(R, np.logical_or(condMask2, condMask5), X)
+    np.putmask(G, np.logical_or(condMask1, condMask4), X)
+    np.putmask(B, np.logical_or(condMask3, condMask6), X)
+
+    np.subtract(Y, R * LUMA_RED + G * LUMA_GREEN + B * LUMA_BLUE, M)
+    print(M[542, 279])
+    np.add(M, R, R)
+    np.add(M, G, G)
+    np.add(M, B, B)
+
+    print((cv.merge([np.maximum(B, 0), np.maximum(G, 0), np.maximum(R, 0)])*255)[542, 279])
+
+    return cv.normalize(cv.merge([np.maximum(B, 0), np.maximum(G, 0), np.maximum(R, 0)])*255, None, 0, 255, cv.NORM_MINMAX, cv.CV_8U)
 
 
 def varianceColorTransfer(img, doner):
@@ -410,22 +530,23 @@ def resolveImage(input, doner, output):
     print("processing " + input)
     inputImg = cv.imread(cv.samples.findFile(input))
     donerImg = cv.imread(cv.samples.findFile(doner))
-    result = varianceColorTransfer(inputImg, donerImg)
-    reDoner = cv.resize(donerImg, (result.shape[1], result.shape[0]))
-    dH, dS, dY = cv.split(BGR2HSY(reDoner))
-    rH, rS, rY = cv.split(BGR2HSY(result))
-    result = HSY2BGR(cv.merge([rH, dS, rY]))
-    result = varianceColorTransfer(result, donerImg)
-
-    if result is not None:
-        cv.imwrite(output, result)
-    # print(inputImg)
-    # cv.imshow("outputed", HSY2BGR(BGR2HSY(inputImg)))
-    # cv.waitKey()
+    # result = varianceColorTransfer(inputImg, donerImg)
+    # reDoner = cv.resize(donerImg, (result.shape[1], result.shape[0]))
+    # dH, dS, dY = cv.split(BGR2HSY(reDoner))
+    # rH, rS, rY = cv.split(BGR2HSY(result))
+    # result = HSY2BGR(cv.merge([rH, dS, rY]))
+    # result = varianceColorTransfer(result, donerImg)
+    #
+    # if result is not None:
+    #     cv.imwrite(output, result)
+    #print(inputImg)
+    cv.imshow("outputed", HSY2BGR(BGR2HSY(inputImg)))
+    cv.waitKey()
+    a = 1/0
     # cv.imshow("outputed", Nine2BGR(BGR2Nine(inputImg)))
     # cv.waitKey()
-    # inputImg = cv.cvtColor(inputImg, cv.COLOR_BGR2LAB)
-    # LabDonerImg = cv.cvtColor(donerImg, cv.COLOR_BGR2LAB)
+    inputImg = cv.cvtColor(inputImg, cv.COLOR_BGR2LAB)
+    LabDonerImg = cv.cvtColor(donerImg, cv.COLOR_BGR2LAB)
     #inputImg = BGR2BGRSV(inputImg)
     #donerImg = BGR2BGRSV(donerImg)
     # B, G, R, S, V = cv.split(donerImg)
@@ -433,7 +554,7 @@ def resolveImage(input, doner, output):
     # cv.imshow("outputed", BGR/255)
     # cv.waitKey()
     #PCAImage, CholImage, SymImage = tiler(inputImg, donerImg, 4)
-    #PCAImage, CholImage, SymImage = color_transfer(inputImg, LabDonerImg)
+    PCAImage, CholImage, SymImage = color_transfer(inputImg, LabDonerImg)
     #PCAImage, CholImage, SymImage = color_transfer(inputImg, donerImg)
     #print(PCAImage)
     # PCAImage = BGR2Nine(cv.cvtColor(cv.normalize(PCAImage, None, 0, 255, cv.NORM_MINMAX, cv.CV_8U), cv.COLOR_LAB2BGR))
@@ -456,10 +577,10 @@ def resolveImage(input, doner, output):
     # nD, nB, nG, nR, nC, nY, nM, nS, nV = cv.split(newSymImage)
     # SymImage = cv.merge([D, B, G, R, C, Y, M, nS, nV])
 
-    # if PCAImage is not None:
+    if PCAImage is not None:
     #     #cv.imwrite(output + "NCA.png", Nine2BGR(PCAImage))
     #     #cv.imwrite(output + "PCA.png", CYMK2BGR(PCAImage))
-    #     cv.imwrite(output + "PCA.png", cv.cvtColor(cv.normalize(PCAImage, None, 0, 255, cv.NORM_MINMAX, cv.CV_8U), cv.COLOR_LAB2BGR))
+        cv.imwrite(output + "PCA.png", cv.cvtColor(cv.normalize(PCAImage, None, 0, 255, cv.NORM_MINMAX, cv.CV_8U), cv.COLOR_LAB2BGR))
     #     #cv.imwrite(output + "PCA.png", BGRSV2BGR(PCAImage))
     # if CholImage is not None:
     #     #cv.imwrite(output + "chol.png", Nine2BGR(CholImage))

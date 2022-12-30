@@ -12,6 +12,8 @@ import operator
 from contextlib import suppress
 import taskbarFuncs
 from skimage.filters import unsharp_mask
+import re
+import sys
 
 ANGLE_TOLERANCE = 0.0314  # maximum variance from a straight line the line detector will accept in radians
 DEFAULT_BORDER_TOLERANCE = 0.0327272727273  # sets how far into an image to look for a border, multiplied by y coord
@@ -25,12 +27,241 @@ ELEC_SAT_VAR = 3 #sets the variance in saturation for the adaptive border detect
 ELEC_VAL_VAR = 1 #sets the variance in value for the adaptive border detection to accept
 CORNER_FIX_STREGNTH = 5 #sets how large an area, and how strong a blur, to use for the corner fixing
 timesRun = 0
+LUMA_BLUE = 0.114#0.0722#0.11
+LUMA_RED = 0.299#0.2126#0.3
+LUMA_GREEN = 0.587#0.7152#0.59
 
 def weightedAverageMatrix(img1, img2, mask, max):
     invMask = np.abs(np.subtract(mask, max))
     multi1 = np.multiply(mask, img1)
     multi2 = np.multiply(invMask, img2)
     return np.array(np.divide(np.add(multi1, multi2), max), dtype=np.uint8)
+
+def getChroma(img):
+    high = np.max(img, (2))
+    low = np.min(img, (2))
+    return np.subtract(high, low)
+
+def getLuma(img):
+    B, G, R = cv.split(img)
+    return np.multiply(B, LUMA_BLUE) + np.multiply(G, LUMA_GREEN) + np.multiply(R, LUMA_RED)
+
+def setSaturation(img, sats):
+    img = img.astype(float)
+    sats = sats.astype(float)
+    order = np.argpartition(img, 1, 2)
+    result = np.zeros_like(img)
+    zeros = np.zeros_like(sats)
+    sorted = np.take_along_axis(img, order, 2)
+    mids = np.divide((sorted[..., 1]-sorted[..., 0])*sats, sorted[..., 2]-sorted[..., 0], where=sorted[..., 2] != sorted[..., 0])
+    comb = cv.merge([zeros, mids, sats])
+    np.put_along_axis(result, order, comb, 2)
+    return result
+    #return cv.normalize(result, None, 0, 255, cv.NORM_MINMAX, cv.CV_8U)
+
+def addLightness(img, light):
+    # print("beep")
+    # print(light[474, 393])
+    order = np.argpartition(img, 1, 2)
+    Limg = np.add(img, light)
+    #Limg[Limg > 1] = 1 #TODO fix properly
+    Limg[Limg < 0] = 0
+    min, mid, max = cv.split(np.take_along_axis(Limg, order, 2))
+    # print(Limg[474, 393])
+
+    Y = getLuma(Limg)
+    # print(Y[474, 393])
+    # print(max[474, 393])
+    nY = Y[:, :, np.newaxis]
+    nMin = min[:, :, np.newaxis]
+    nMax = max[:, :, np.newaxis]
+
+    # print(np.min(Limg))
+    # print(np.min(Y))
+    # print(np.max(Limg))
+
+    condMask = np.less(min, 0)[:, :, np.newaxis]
+    np.multiply((Limg-nY) * nY, np.divide(1, nY-nMin, where=condMask), Limg, where=condMask)
+    np.add(Limg, nY, Limg, where=condMask)
+
+    # print(np.min(Limg))
+    # print(np.max(Limg))
+
+    # print((max[474, 393] - 1) / sys.float_info.epsilon)
+    condMask = np.logical_and(np.round(max, 1) > 1, max-Y > sys.float_info.epsilon)[:, :, np.newaxis]
+    np.multiply((Limg - nY) * (1 - nY), np.divide(1, nMax - nY, where=condMask), Limg, where=condMask)
+    np.add(Limg, nY, Limg, where=condMask)
+    # print(Limg[474, 393])
+    Limg[Limg > 1] = 1
+    print(np.min(Limg))
+    print(np.max(Limg))
+    return Limg
+
+def BGR2HSY(img):
+    B, G, R = cv.split(img.astype(np.double)/255)
+    H = np.zeros_like(B)
+    C = np.copy(H)
+    S = np.copy(H)
+    maxS = np.full_like(H, 0.5)
+    Ya = np.copy(H)
+    rR = np.multiply(R, LUMA_RED)
+    bB = np.multiply(B, LUMA_BLUE)
+    gG = np.multiply(G, LUMA_GREEN)
+    Y = rR + bB + gG
+    print("beep")
+    print(Y[714, 491])
+
+    condMask = np.logical_and(np.greater_equal(R, G), np.greater_equal(G, B))
+    np.subtract(R, B, C, where=condMask) #67
+    condMask = np.logical_and(condMask, C)
+    np.divide(np.subtract(G, B), C, H, where=condMask) #66 / 67 = 0.985074626866
+    print(C[714, 491])
+    print(H[714, 491])
+
+    condMask = np.logical_and(np.greater(G, R), np.greater_equal(G, B))
+    np.subtract(G, np.minimum(B, R), C, where=condMask)
+    condMask = np.logical_and(condMask, C)
+    np.divide(np.subtract(B, R), C, H, where=condMask)
+    np.add(H, 2, H, where=condMask)
+
+    condMask = np.logical_and(np.greater(B, R), np.greater(B, G))
+    np.subtract(B, np.minimum(G, R), C, where=condMask)
+    condMask = np.logical_and(condMask, C)
+    np.divide(np.subtract(R, G), C, H, where=condMask)
+    np.add(H, 4, H, where=condMask)
+
+    condMask = np.logical_and(np.greater_equal(R, B), np.greater_equal(B, G))
+    np.subtract(R, G, C, where=condMask)
+    condMask = np.logical_and(condMask, C)
+    np.divide(np.subtract(G, B), C, H, where=condMask)
+    np.add(H, 6, H, where=condMask)
+
+    np.add(LUMA_RED, np.multiply(LUMA_GREEN, H), maxS, where=np.greater_equal(H, 0)) #0.704525373134 + LUMA_RED = 0.917125373134
+    np.subtract(LUMA_RED + LUMA_GREEN, np.multiply(LUMA_RED, H - 1), maxS, where=np.greater_equal(H, 1))
+    np.add(LUMA_GREEN, np.multiply(LUMA_BLUE, H - 2), maxS, where=np.greater_equal(H, 2))
+    np.subtract(LUMA_GREEN + LUMA_BLUE, np.multiply(LUMA_GREEN, H - 3), maxS, where=np.greater_equal(H, 3))
+    np.add(LUMA_BLUE, np.multiply(LUMA_RED, H - 4), maxS, where=np.greater_equal(H, 4))
+    np.subtract(LUMA_RED + LUMA_BLUE, np.multiply(LUMA_BLUE, H - 5), maxS, where=np.logical_and(np.greater_equal(H, 5), np.less_equal(H, 6)))
+    print(maxS[714, 491])
+
+    condMask = np.less_equal(Y, maxS) #0.9782250980392156 > 0.917125373134
+    np.multiply(np.divide(Y, maxS, where=np.logical_and(C, condMask)), 0.5, Ya, where=np.logical_and(C, condMask))
+    np.divide(Y - maxS, (1 - maxS) * 2, Ya, where=np.logical_and(C, np.logical_not(condMask))) #0.0610997249052 / 0.165749253732 = 0.368627450981 + 0.5 = 0.868627450981
+    np.add(Ya, 0.5, Ya, where=np.logical_and(C, np.logical_not(condMask)))
+
+    np.divide(C, Ya*2, S, where=np.logical_and(C, condMask))
+    np.divide(C, 2-(Ya*2), S, where=np.logical_and(C, np.logical_not(condMask))) # 0.868627450981 * 2 = 1.73725490196. 2 - 1.73725490196 = 0.26274509804
+    print(H[714, 491])
+    print(S[714, 491])
+    print(Y[714, 491])
+    return cv.merge([H, np.maximum(S, 0), np.maximum(Y, 0)])
+
+def HSY2BGR(img):
+    print("boop")
+    print(img[714, 491])
+    H, S, Y = cv.split(img)
+    maxS = np.zeros_like(H)
+    B = np.copy(maxS)
+    G = np.copy(maxS)
+    R = np.copy(maxS)
+    Ya = np.copy(maxS)
+    C = np.copy(maxS)
+    X = np.copy(maxS)
+    M = np.copy(maxS)
+
+    condMask1 = np.logical_or(np.less(H, 1), np.greater_equal(H, 6))
+    np.add(LUMA_RED, LUMA_GREEN*H, maxS, where=condMask1)
+
+    condMask2 = np.logical_and(np.greater_equal(H, 1), np.less(H, 2))
+    np.subtract(LUMA_RED+LUMA_GREEN, LUMA_RED * (H - 1), maxS, where=condMask2)
+    print(LUMA_RED+LUMA_GREEN)
+    print(H[714, 491])
+    print(LUMA_RED * (H[714, 491] - 1))
+    print(Y[714, 491])
+    print(maxS[714, 491])
+
+    condMask3 = np.logical_and(np.greater_equal(H, 2), np.less(H, 3))
+    np.add(LUMA_GREEN, LUMA_BLUE * (H - 2), maxS, where=condMask3)
+
+    condMask4 = np.logical_and(np.greater_equal(H, 3), np.less(H, 4))
+    np.subtract(LUMA_GREEN+LUMA_BLUE, LUMA_GREEN * (H - 3), maxS, where=condMask4)
+    condMask5 = np.logical_and(np.greater_equal(H, 4), np.less(H, 5))
+    np.add(LUMA_BLUE, LUMA_RED * (H - 4), maxS, where=condMask5)
+
+    condMask6 = np.logical_or(np.greater_equal(H, 5), np.less(H, 0))
+    np.subtract(LUMA_BLUE + LUMA_RED, LUMA_BLUE * (H - 5), maxS, where=condMask6)
+
+    YmaxSCond = np.less(Y, maxS)
+    np.multiply(np.divide(Y, maxS, where=YmaxSCond), 0.5, Ya, where=YmaxSCond)
+    np.multiply(S * 2, Ya, C, where=YmaxSCond)
+    np.multiply(np.divide(Y, maxS, where=np.logical_and(condMask1, np.equal(Y, maxS))), 0.5, Ya, where=np.logical_and(condMask1, np.equal(Y, maxS)))
+
+    np.multiply(np.divide(Y - maxS, 1 - maxS, where=np.logical_not(YmaxSCond)), 0.5, Ya, where=np.logical_not(YmaxSCond))
+    np.add(Ya, 0.5, Ya, where=np.logical_not(YmaxSCond))
+    np.multiply(S, 2 - (Ya * 2), C, where=np.logical_not(YmaxSCond))
+    np.multiply(1 - np.abs((H % 2) - 1), C, X)
+    print("baap")
+    print((Y[714, 491] - maxS[714, 491]) / (1 - maxS[714, 491]))
+    print(Ya[714, 491])
+    print(C[714, 491])
+    print(X[714, 491])
+
+    np.putmask(R, np.logical_or(condMask1, condMask6), C)
+    np.putmask(G, np.logical_or(condMask2, condMask3), C)
+    np.putmask(B, np.logical_or(condMask4, condMask5), C)
+
+    np.putmask(R, np.logical_or(condMask2, condMask5), X)
+    np.putmask(G, np.logical_or(condMask1, condMask4), X)
+    np.putmask(B, np.logical_or(condMask3, condMask6), X)
+    print(B[714, 491])
+
+    np.subtract(Y, R * LUMA_RED + G * LUMA_GREEN + B * LUMA_BLUE, M)
+    np.add(M, R, R)
+    np.add(M, G, G)
+    np.add(M, B, B)
+    print(B[714, 491])
+
+    return cv.normalize(cv.merge([np.maximum(B, 0), np.maximum(G, 0), np.maximum(R, 0)])*255, None, 0, 255, cv.NORM_MINMAX, cv.CV_8U)
+
+def varianceColorTransfer(img, doner, debug):
+    doner = cv.resize(doner, (img.shape[1], img.shape[0]))
+    donerRe = np.reshape(doner, (doner.shape[1]*doner.shape[0], doner.shape[2])).astype(float)
+    imgRe = np.reshape(img, (img.shape[1] * img.shape[0], img.shape[2])).astype(float)
+    donerVar = np.var(donerRe, 0)
+    imgVar = np.var(imgRe, 0)
+    # powers = np.log(donerVar) / np.log(imgVar)
+    # if debug:
+    #     print("powers: " + str(powers))
+    # scaledImg = np.power(img, powers[np.newaxis: np.newaxis:])
+    factors = donerVar / imgVar
+    if debug:
+        print("factors: " + str(factors))
+    scaledImg = np.multiply(img, factors[np.newaxis: np.newaxis:])
+    simgRe = np.reshape(scaledImg, (scaledImg.shape[1] * scaledImg.shape[0], scaledImg.shape[2]))
+    meanDiff = np.mean(donerRe - simgRe, 0)
+    scaledImg = scaledImg + meanDiff[np.newaxis: np.newaxis:]
+    scaledImg[scaledImg > 255] = 255
+    scaledImg[scaledImg < 0] = 0
+    return cv.normalize(scaledImg, None, 0, 255, cv.NORM_MINMAX, cv.CV_8U)
+
+def PCAColorTransfer(img, doner):
+    iMean = img.mean(0).mean(0)
+    dMean = doner.mean(0).mean(0)
+    _, dStd = cv.meanStdDev(doner)
+    imgUnrav = np.reshape(img, (img.shape[0] * img.shape[1], img.shape[2])) - iMean
+    donUnrav = np.reshape(doner, (doner.shape[0] * doner.shape[1], img.shape[2])) - dMean
+    imgCov = np.cov(imgUnrav.T)
+    donCov = np.cov(donUnrav.T)
+    imgEval, imgEvect = np.linalg.eigh(imgCov)
+    donEval, donEvect = np.linalg.eigh(donCov)
+    QiUnk = (imgEvect * np.sqrt(np.abs(imgEval))).dot(imgEvect.T) + 1e-5 * np.eye(imgUnrav.shape[1])
+    QdUnk = (donEvect * np.sqrt(np.abs(donEval))).dot(donEvect.T) + 1e-5 * np.eye(donUnrav.shape[1])
+    result = QdUnk.dot(np.linalg.inv(QiUnk)).dot(imgUnrav.T)
+    result = result.reshape(*img.transpose(2, 0, 1).shape).transpose(1, 2, 0)
+    result += dMean
+    result[result > 255] = 255
+    result[result < 0] = 0
+    return result
 
 def smoothBorders(src, top, bottom, left, right, blur, cb):
     if cb:
@@ -585,8 +816,8 @@ def trimImage(img, fromTop, newBot, fromLeft, newRight): #crop the image based o
 
 def calculateOuterAndInnerPoint(pnt, middle, extraSpace): #from point and midspace, get a matching outer point for mesh transform
     return [
-        [pnt[0] + ((pnt[0] - middle[0]) * (extraSpace[0] * 2)), pnt[1] + ((pnt[1] - middle[1]) * (extraSpace[1] * 2))],
-        pnt]
+        [pnt[0] + ((pnt[0] - middle[0]) * (extraSpace[0] * 2)),
+         pnt[1] + ((pnt[1] - middle[1]) * (extraSpace[1] * 2))], pnt]
 
 
 def drawLineWithMid(img, pt1, pt2, mid): #draw a 3 point line
@@ -607,7 +838,7 @@ def drawBox(img, upLeft, upMid, upRight, leftMid, rightMid, lowLeft, lowMid, low
     return img
 
 
-def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, filter, blur, cb, debug=False, show=False):
+def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, filter, blur, cb, trans, debug=False, show=False):
     src = cv.imread(cv.samples.findFile(baseImg))
     if src is None:
         print('Base Image at ' + baseImg + ' Not Found, skipping')
@@ -683,6 +914,7 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, filte
         print("cardWidth: " + str(cardWidth))
         print("cardHeight: " + str(cardHeight))
         print("border: " + str(border))
+        print("res: " + str(res))
 
     if res: #set the target card's size
         border = [res[1] * Decimal(border[0]), res[1] * Decimal(border[1]), res[0] * Decimal(border[2]),
@@ -696,8 +928,8 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, filte
                   Decimal((cardWidth * border[2])),
                   Decimal((cardWidth * border[3]))]
     #set the target position
-    targetOffsetX = Decimal(round(((targetWidth * extraSpace[0])) * 2) / 2)
-    targetOffsetY = Decimal(round(((targetHeight * extraSpace[1])) * 2) / 2)
+    targetOffsetX = Decimal(targetWidth * extraSpace[0])
+    targetOffsetY = Decimal(targetHeight * extraSpace[1])
     targetCard = [targetOffsetY, targetOffsetY + targetHeight, targetOffsetX, targetOffsetX + targetWidth]
     targetMid = (Decimal(targetWidth * (Decimal(0.5) + extraSpace[0])), Decimal(targetHeight * (Decimal(0.5) + extraSpace[1])))
 
@@ -709,6 +941,7 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, filte
         print("targetmid: " + str(targetMid))
         print("targetcard: " + str(targetCard))
     #create arrays in scipy compatible format
+    #np.set_printoptions(suppress=True)
     srcP = np.array(
         calculateOuterAndInnerPoint(upLeft, midPoint, extraSpace) +
         calculateOuterAndInnerPoint(leftMid, midPoint, extraSpace) +
@@ -740,7 +973,6 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, filte
     #src = cv.cvtColor(src, cv.COLOR_BGR2BGRA)
     #expand the border to fill the extra space
     bordered = addBlurredExtendBorder(src, round(offsetY), round(offsetY), round(offsetX), round(offsetX), blur)
-
     tform = PiecewiseAffineTransform()
     tform.estimate(dstP, srcP)
     # mesh transform the image into shape
@@ -748,31 +980,55 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, filte
     round(targetHeight + targetOffsetY * 2), round(targetWidth + targetOffsetX * 2))))
 
     if trim:
-        warped = trimImage(targetCard[0], targetCard[1], targetCard[2], targetCard[3])
+        warped = trimImage(math.floor(targetCard[0]), math.ceil(targetCard[1]), math.floor(targetCard[2]), math.ceil(targetCard[3]))
     #calculate how much of the new image to trim off/add on to create the correct size border
-    adjustNeeded = [round(round(targetCard[0] - border[0]) * Decimal(-1)),
-                    round(round(targetCard[1] + border[1]) - warped.shape[0]),
-                    round(round(targetCard[2] - border[2]) * Decimal(-1)),
-                    round(round(targetCard[3] + border[3]) - warped.shape[1])]
+    adjustNeeded = [round((targetCard[0] - border[0]) * Decimal(-1)),
+                    round((targetCard[1] + border[1]) - warped.shape[0]),
+                    round((targetCard[2] - border[2]) * Decimal(-1)),
+                    round((targetCard[3] + border[3]) - warped.shape[1])]
     if debug:
         print("adjustNeeded: " + str(adjustNeeded))
     if any(side < 0 for side in adjustNeeded):
         warped = warped[max(0, adjustNeeded[0] * -1):len(warped) + min(0, adjustNeeded[1]),
                  max(0, adjustNeeded[2] * -1):len(warped[0]) + min(0, adjustNeeded[3])]
-
     if any(side > 0 for side in adjustNeeded):
         warped = addBlurredExtendBorder(warped, max(0, adjustNeeded[0]), max(0, adjustNeeded[1]), max(0, adjustNeeded[2]),
                                         max(0, adjustNeeded[3]), blur)
 
     warped = smoothBorders(warped, round(border[0]), round(border[1]), round(border[2]), round(border[3]), blur, cb)
+    if trans:
+        doner = cv.imread(cv.samples.findFile(trans))
+        if doner is None:
+            print('Doner Image at ' + trans + ' Not Found, skipping transfer')
+            images = [warped]
+        else:
+            LabDoner = cv.cvtColor(doner, cv.COLOR_BGR2LAB)
+            doner = doner/255
+            PCA = PCAColorTransfer(warped/255, doner)
+            oldLuma = getLuma(PCA)[:, :, np.newaxis]
+            sTransfer = setSaturation(PCA, getChroma(doner))
+            sTransfer = addLightness(sTransfer, oldLuma - getLuma(sTransfer)[:, :, np.newaxis])
+            cTransfer = addLightness(doner, getLuma(PCA)[:, :, np.newaxis] - getLuma(doner)[:, :, np.newaxis])
+            PCA[PCA > 1] = 1
+            PCA = cv.normalize(PCA, None, 0, 255, cv.NORM_MINMAX, cv.CV_8U)
+            images = [warped,
+                      cv.normalize(PCA, None, 0, 255, cv.NORM_MINMAX, cv.CV_8U),
+                      cv.normalize(sTransfer, None, 0, 255, cv.NORM_MINMAX, cv.CV_8U),
+                      cv.normalize(cTransfer, None, 0, 255, cv.NORM_MINMAX, cv.CV_8U)]
+
+    else:
+        images = [warped]
+
     #apply an alpha mask if provided, to make the corners
     if mask:
-        warped = maskcorners.processMask(warped, mask)
+        for count in range(len(images)):
+            images[count-1] = maskcorners.processMask(images[count-1], mask)
     if show:
-        cv.imshow("outputed", warped)
+        for image in images:
+            cv.imshow("outputed " + str(count), image)
         cv.waitKey()
         return None
-    return warped
+    return images
 
 
 def processMultiArg(arg, numNeeded, decimal):
@@ -803,6 +1059,7 @@ def processArgs(inputText):
     filter = False
     blur = [25, 25]
     cb = None
+    trans = None
 
     msg = "Improves old pokemon card scans"
     parser = argparse.ArgumentParser(description=msg)
@@ -829,6 +1086,7 @@ def processArgs(inputText):
     parser.add_argument("-f", "--Filter", help="Bring up the filter menu to customise the filter used. default: False")
     parser.add_argument("-bb", "--BorderBlur", help="how much to blur the border, as so x,y. default: 25,25")
     parser.add_argument("-cb", "--CleanBorder", help="avoid sharpening the border, cleaning it instead. enable by setting tolerance like so t,b,l,r.")
+    parser.add_argument("-ct", "--ColorTransfer", help="Transfer Colors from a render with with file or a similarly named one from this folder. default None")
 
     args = parser.parse_args()
 
@@ -860,17 +1118,34 @@ def processArgs(inputText):
         blur = processMultiArg(args.BorderBlur, 2, False)
     if args.CleanBorder:
         cb = processMultiArg(args.CleanBorder, 4, False)
-    return input, clean, output, border, trim, edge, res, mask, manual, filter, blur, cb, debug, show
+    if args.ColorTransfer:
+        trans = args.ColorTransfer
+    return input, clean, output, border, trim, edge, res, mask, manual, filter, blur, cb, trans, debug, show
 
+def getCacheFilename(transPath, inputPath):
+    iBase = os.path.basename(inputPath)
+    numStr = re.search("^0*(\d+)", iBase)[1]
+    if numStr:
+        tPath = os.path.dirname(transPath)
+        return os.path.join(tPath, numStr + ".png")
+    else:
+        print("ERROR: no match for cache filename for " + inputPath)
+        return None
 
-def resolveImage(input, clean, output, border, trim, edge, res, mask, manual, filter, blur, cb, debug, show):
+def resolveImage(input, clean, output, border, trim, edge, res, mask, manual, filter, blur, cb, trans, debug, show):
     print("processing " + input)
-    image = processImage(input, clean, border, trim, edge, res, mask, manual, filter, blur, cb, debug, show)
-    if image is not None:
-        cv.imwrite(output, image)
+    images = processImage(input, clean, border, trim, edge, res, mask, manual, filter, blur, cb, trans, debug, show)
+    if images is not None:
+        count = 1
+        for image in images:
+            if len(images) == 1:
+                cv.imwrite(output, image)
+            else:
+                cv.imwrite(re.sub("\.png$", str(count) + ".png", output), image)
+                count += 1
 
 
-def processFolder(input, clean, output, border, trim, edge, res, mask, manual, filter, blur, cb, debug, show):
+def processFolder(input, clean, output, border, trim, edge, res, mask, manual, filter, blur, cb, trans, debug, show):
     with suppress(FileExistsError):
         os.mkdir(output)
     with os.scandir(input) as entries:
@@ -878,20 +1153,22 @@ def processFolder(input, clean, output, border, trim, edge, res, mask, manual, f
             cleanPath = None
             inputPath = os.path.join(input, entry.name)
             outputPath = os.path.join(output, entry.name)
+            transPath = os.path.join(trans, entry.name)
             if clean:
                 cleanPath = os.path.join(clean, entry.name)
             if os.path.isfile(inputPath) and entry.name != "Place Images Here":
-                resolveImage(inputPath, cleanPath, outputPath, border, trim, edge, res, mask, manual, filter, blur, cb, debug, show)
+                transPath = getCacheFilename(transPath, inputPath)
+                resolveImage(inputPath, cleanPath, outputPath, border, trim, edge, res, mask, manual, filter, blur, cb, transPath, debug, show)
             elif os.path.isdir(inputPath):
-                processFolder(inputPath, cleanPath, outputPath, border, trim, edge, res, mask, manual, filter, blur, cb, debug, show)
+                processFolder(inputPath, cleanPath, outputPath, border, trim, edge, res, mask, manual, filter, blur, cb, transPath, debug, show)
 
 
 def main():
-    input, clean, output, border, trim, edge, res, mask, manual, filter, blur, cb, debug, show = processArgs("folder")
+    input, clean, output, border, trim, edge, res, mask, manual, filter, blur, cb, trans, debug, show = processArgs("folder")
     if os.path.isfile(input):
-        resolveImage(input, clean, output, border, trim, edge, res, mask, manual, filter, blur, cb, debug, show)
+        resolveImage(input, clean, output, border, trim, edge, res, mask, manual, filter, blur, cb, trans, debug, show)
     elif os.path.isdir(input):
-        processFolder(input, clean, output, border, trim, edge, res, mask, manual, filter, blur, cb, debug, show)
+        processFolder(input, clean, output, border, trim, edge, res, mask, manual, filter, blur, cb, trans, debug, show)
     else:
         print("Input file not found.")
 
