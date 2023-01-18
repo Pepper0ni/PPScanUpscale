@@ -3,9 +3,9 @@ import argparse
 import cv2 as cv
 
 def processMask(src, mask):
-    print(src.shape)
+    #print(src.shape)
     maskImg = cv.imread(cv.samples.findFile(mask), cv.IMREAD_UNCHANGED)
-    print(maskImg.shape)
+    #print(maskImg.shape)
     src = cv.cvtColor(src, cv.COLOR_BGR2BGRA)
     maskImg = cv.cvtColor(maskImg, cv.COLOR_BGR2BGRA)
     result = cv.bitwise_and(src, maskImg)

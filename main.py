@@ -14,6 +14,7 @@ import taskbarFuncs
 from skimage.filters import unsharp_mask
 import re
 import sys
+import utilities
 
 ANGLE_TOLERANCE = 0.0314  # maximum variance from a straight line the line detector will accept in radians
 DEFAULT_BORDER_TOLERANCE = 0.0327272727273  # sets how far into an image to look for a border, multiplied by y coord
@@ -27,9 +28,9 @@ ELEC_SAT_VAR = 3 #sets the variance in saturation for the adaptive border detect
 ELEC_VAL_VAR = 1 #sets the variance in value for the adaptive border detection to accept
 CORNER_FIX_STREGNTH = 5 #sets how large an area, and how strong a blur, to use for the corner fixing
 timesRun = 0
-LUMA_BLUE = 0.114#0.0722#0.11
-LUMA_RED = 0.299#0.2126#0.3
-LUMA_GREEN = 0.587#0.7152#0.59
+LUMA_BLUE = 1/3#0.114
+LUMA_RED = 1/3#0.299
+LUMA_GREEN = 1/3#0.587
 
 def weightedAverageMatrix(img1, img2, mask, max):
     invMask = np.abs(np.subtract(mask, max))
@@ -93,12 +94,21 @@ def addLightness(img, light):
     np.add(Limg, nY, Limg, where=condMask)
     # print(Limg[474, 393])
     Limg[Limg > 1] = 1
-    print(np.min(Limg))
-    print(np.max(Limg))
+    #print(np.min(Limg))
+    #print(np.max(Limg))
     return Limg
 
+def revertBlacks(og, doner, mod):
+    ogH, ogS, ogV = cv.split(cv.cvtColor(og, cv.COLOR_BGR2HSV))
+    modH, modS, modV = cv.split(cv.cvtColor(mod, cv.COLOR_BGR2HSV))
+    donerH, donerS, donerV = cv.split(cv.cvtColor(doner, cv.COLOR_BGR2HSV))
+    fixed = np.where(np.logical_xor(np.less(ogV, 20), np.less(donerV, 20))[:, :, np.newaxis], og, mod)
+    return fixed
+    #return cv.cvtColor(cv.merge([modH, modS, fixedV]), cv.COLOR_HSV2BGR)
+
 def BGR2HSY(img):
-    B, G, R = cv.split(img.astype(np.double)/255)
+    B, G, R = cv.split(img)
+    #B, G, R = cv.split(img.astype(np.double)/255)
     H = np.zeros_like(B)
     C = np.copy(H)
     S = np.copy(H)
@@ -108,15 +118,12 @@ def BGR2HSY(img):
     bB = np.multiply(B, LUMA_BLUE)
     gG = np.multiply(G, LUMA_GREEN)
     Y = rR + bB + gG
-    print("beep")
-    print(Y[714, 491])
 
     condMask = np.logical_and(np.greater_equal(R, G), np.greater_equal(G, B))
     np.subtract(R, B, C, where=condMask) #67
     condMask = np.logical_and(condMask, C)
     np.divide(np.subtract(G, B), C, H, where=condMask) #66 / 67 = 0.985074626866
-    print(C[714, 491])
-    print(H[714, 491])
+
 
     condMask = np.logical_and(np.greater(G, R), np.greater_equal(G, B))
     np.subtract(G, np.minimum(B, R), C, where=condMask)
@@ -142,7 +149,6 @@ def BGR2HSY(img):
     np.subtract(LUMA_GREEN + LUMA_BLUE, np.multiply(LUMA_GREEN, H - 3), maxS, where=np.greater_equal(H, 3))
     np.add(LUMA_BLUE, np.multiply(LUMA_RED, H - 4), maxS, where=np.greater_equal(H, 4))
     np.subtract(LUMA_RED + LUMA_BLUE, np.multiply(LUMA_BLUE, H - 5), maxS, where=np.logical_and(np.greater_equal(H, 5), np.less_equal(H, 6)))
-    print(maxS[714, 491])
 
     condMask = np.less_equal(Y, maxS) #0.9782250980392156 > 0.917125373134
     np.multiply(np.divide(Y, maxS, where=np.logical_and(C, condMask)), 0.5, Ya, where=np.logical_and(C, condMask))
@@ -151,14 +157,10 @@ def BGR2HSY(img):
 
     np.divide(C, Ya*2, S, where=np.logical_and(C, condMask))
     np.divide(C, 2-(Ya*2), S, where=np.logical_and(C, np.logical_not(condMask))) # 0.868627450981 * 2 = 1.73725490196. 2 - 1.73725490196 = 0.26274509804
-    print(H[714, 491])
-    print(S[714, 491])
-    print(Y[714, 491])
+
     return cv.merge([H, np.maximum(S, 0), np.maximum(Y, 0)])
 
 def HSY2BGR(img):
-    print("boop")
-    print(img[714, 491])
     H, S, Y = cv.split(img)
     maxS = np.zeros_like(H)
     B = np.copy(maxS)
@@ -174,11 +176,6 @@ def HSY2BGR(img):
 
     condMask2 = np.logical_and(np.greater_equal(H, 1), np.less(H, 2))
     np.subtract(LUMA_RED+LUMA_GREEN, LUMA_RED * (H - 1), maxS, where=condMask2)
-    print(LUMA_RED+LUMA_GREEN)
-    print(H[714, 491])
-    print(LUMA_RED * (H[714, 491] - 1))
-    print(Y[714, 491])
-    print(maxS[714, 491])
 
     condMask3 = np.logical_and(np.greater_equal(H, 2), np.less(H, 3))
     np.add(LUMA_GREEN, LUMA_BLUE * (H - 2), maxS, where=condMask3)
@@ -200,11 +197,6 @@ def HSY2BGR(img):
     np.add(Ya, 0.5, Ya, where=np.logical_not(YmaxSCond))
     np.multiply(S, 2 - (Ya * 2), C, where=np.logical_not(YmaxSCond))
     np.multiply(1 - np.abs((H % 2) - 1), C, X)
-    print("baap")
-    print((Y[714, 491] - maxS[714, 491]) / (1 - maxS[714, 491]))
-    print(Ya[714, 491])
-    print(C[714, 491])
-    print(X[714, 491])
 
     np.putmask(R, np.logical_or(condMask1, condMask6), C)
     np.putmask(G, np.logical_or(condMask2, condMask3), C)
@@ -213,15 +205,42 @@ def HSY2BGR(img):
     np.putmask(R, np.logical_or(condMask2, condMask5), X)
     np.putmask(G, np.logical_or(condMask1, condMask4), X)
     np.putmask(B, np.logical_or(condMask3, condMask6), X)
-    print(B[714, 491])
 
     np.subtract(Y, R * LUMA_RED + G * LUMA_GREEN + B * LUMA_BLUE, M)
     np.add(M, R, R)
     np.add(M, G, G)
     np.add(M, B, B)
-    print(B[714, 491])
 
-    return cv.normalize(cv.merge([np.maximum(B, 0), np.maximum(G, 0), np.maximum(R, 0)])*255, None, 0, 255, cv.NORM_MINMAX, cv.CV_8U)
+    #return cv.normalize(cv.merge([np.maximum(B, 0), np.maximum(G, 0), np.maximum(R, 0)])*255, None, 0, 255, cv.NORM_MINMAX, cv.CV_8U)
+    return cv.merge([np.maximum(B, 0), np.maximum(G, 0), np.maximum(R, 0)])
+
+
+def boostContrast(img, doner):
+    H, S, V = cv.split(cv.cvtColor(img, cv.COLOR_BGR2HSV))
+    sV = utilities.trimImage(V, 525, V.shape[0], 0, V.shape[1])
+    VMean = np.percentile(sV, 30)# min(sV.mean(0).mean(0)*0.9, 255)
+    #print(VMean)
+    dH, dS, dV = cv.split(cv.cvtColor(doner, cv.COLOR_BGR2HSV))
+    sdV = utilities.trimImage(dV, 525, doner.shape[0], 0, doner.shape[1])
+    #print("source percentile " + str(np.percentile(sV, 0.5)))
+    #print("doner percentile " + str(np.percentile(sdV, 0.1)))
+    toLower = np.percentile(sV, 0.5) - np.percentile(sdV, 0.1)
+    #print(toLower)
+    V = V.astype(float)
+    #print(np.less(V, VMean))
+    #print(utilities.customLog(VMean, VMean-toLower))
+    if toLower > 0:
+        #print(V[750, 289])
+        np.subtract(V, toLower, V,  where=np.less(V, VMean))
+        #print(V[750, 289])
+        np.multiply(V, VMean / (VMean - toLower), V, where=np.less(V, VMean))
+        #np.power(V, utilities.customLog(VMean, VMean-toLower), V,  where=np.less(V, VMean))
+        #print(V[750, 289])
+    V[V < 0] = 0
+    V[V > 255] = 255
+    #print(cv.cvtColor(cv.merge([H, S, V.astype(np.uint8)]), cv.COLOR_HSV2BGR)[750, 289])
+    return cv.cvtColor(cv.merge([H, S, V.astype(np.uint8)]), cv.COLOR_HSV2BGR)
+
 
 def varianceColorTransfer(img, doner, debug):
     doner = cv.resize(doner, (img.shape[1], img.shape[0]))
@@ -276,10 +295,10 @@ def smoothBorders(src, top, bottom, left, right, blur, cb):
         right = right - cb[3]
         caps = [0, 0, 0, 0]
 
-        borderImgs[0] = trimImage(src, 0, top, 0, src.shape[1])
-        borderImgs[1] = trimImage(src, src.shape[0]-bottom, src.shape[0], 0, src.shape[1])
-        borderImgs[2] = trimImage(src, 0, src.shape[0], 0, left)
-        borderImgs[3] = trimImage(src, 0, src.shape[0], src.shape[1]-right, src.shape[1])
+        borderImgs[0] = utilities.trimImage(src, 0, top, 0, src.shape[1])
+        borderImgs[1] = utilities.trimImage(src, src.shape[0]-bottom, src.shape[0], 0, src.shape[1])
+        borderImgs[2] = utilities.trimImage(src, 0, src.shape[0], 0, left)
+        borderImgs[3] = utilities.trimImage(src, 0, src.shape[0], src.shape[1]-right, src.shape[1])
 
         maskRow = np.tile(np.array([[[1, 1, 1]], [[2, 2, 2]], [[3, 3, 3]]], dtype=np.int16), (1, borderImgs[0].shape[1], 1))
         invMaskRow = np.tile(np.array([[[3, 3, 3]], [[2, 2, 2]], [[1, 1, 1]]], dtype=np.int16), (1, borderImgs[0].shape[1], 1))
@@ -306,24 +325,24 @@ def smoothBorders(src, top, bottom, left, right, blur, cb):
         masks[3] = pasteImage(masks[3], np.zeros((top, 3, 3), np.int16), 0, 0)
         masks[3] = pasteImage(masks[3], np.zeros((bottom, 3, 3), np.int16), 0, masks[3].shape[0]-bottom)
 
-        trimmed = sharpen(trimImage(src, top, src.shape[0] - bottom, left, src.shape[1]-right), 3, 0.28, 1)
+        trimmed = sharpen(utilities.trimImage(src, top, src.shape[0] - bottom, left, src.shape[1]-right), 3, 0.28, 1)
         count = 0
         for border in borderImgs:
             blurred = cv.blur(np.array(border, dtype=np.int16), (blur[0], blur[1]))
             borderImgs[count] = weightedAverageMatrix(border, blurred, masks[count], 4)
             count += 1
 
-        cornerImgs[0] = [trimImage(borderImgs[0], 0, borderImgs[0].shape[0], 0, left),
-                         trimImage(borderImgs[2], 0, top, 0, borderImgs[2].shape[1])]
+        cornerImgs[0] = [utilities.trimImage(borderImgs[0], 0, borderImgs[0].shape[0], 0, left),
+                         utilities.trimImage(borderImgs[2], 0, top, 0, borderImgs[2].shape[1])]
 
-        cornerImgs[1] = [trimImage(borderImgs[0], 0, borderImgs[0].shape[0], borderImgs[0].shape[1]-right, borderImgs[0].shape[1]),
-                         trimImage(borderImgs[3], 0, top, 0, borderImgs[3].shape[1])]
+        cornerImgs[1] = [utilities.trimImage(borderImgs[0], 0, borderImgs[0].shape[0], borderImgs[0].shape[1]-right, borderImgs[0].shape[1]),
+                         utilities.trimImage(borderImgs[3], 0, top, 0, borderImgs[3].shape[1])]
 
-        cornerImgs[2] = [trimImage(borderImgs[1], 0, borderImgs[1].shape[0], 0, left),
-                         trimImage(borderImgs[2], borderImgs[2].shape[0] - bottom, borderImgs[2].shape[0], 0, borderImgs[2].shape[1])]
+        cornerImgs[2] = [utilities.trimImage(borderImgs[1], 0, borderImgs[1].shape[0], 0, left),
+                         utilities.trimImage(borderImgs[2], borderImgs[2].shape[0] - bottom, borderImgs[2].shape[0], 0, borderImgs[2].shape[1])]
 
-        cornerImgs[3] = [trimImage(borderImgs[1], 0, borderImgs[1].shape[0], borderImgs[1].shape[1]-right, borderImgs[1].shape[1]),
-                         trimImage(borderImgs[3], borderImgs[3].shape[0] - bottom, borderImgs[3].shape[0], 0, borderImgs[3].shape[1])]
+        cornerImgs[3] = [utilities.trimImage(borderImgs[1], 0, borderImgs[1].shape[0], borderImgs[1].shape[1]-right, borderImgs[1].shape[1]),
+                         utilities.trimImage(borderImgs[3], borderImgs[3].shape[0] - bottom, borderImgs[3].shape[0], 0, borderImgs[3].shape[1])]
 
 
         lowest = min(top, left)
@@ -354,8 +373,8 @@ def smoothBorders(src, top, bottom, left, right, blur, cb):
         borderImgs[0] = pasteImage(pasteImage(borderImgs[0], finalCorners[0], 0, 0), finalCorners[1], borderImgs[0].shape[1]-right, 0)
         borderImgs[1] = pasteImage(pasteImage(borderImgs[1], finalCorners[2], 0, 0), finalCorners[3],
                                    borderImgs[1].shape[1] - right, 0)
-        borderImgs[2] = trimImage(borderImgs[2], top, borderImgs[2].shape[0] - bottom, 0, borderImgs[2].shape[1])
-        borderImgs[3] = trimImage(borderImgs[3], top, borderImgs[3].shape[0] - bottom, 0, borderImgs[3].shape[1])
+        borderImgs[2] = utilities.trimImage(borderImgs[2], top, borderImgs[2].shape[0] - bottom, 0, borderImgs[2].shape[1])
+        borderImgs[3] = utilities.trimImage(borderImgs[3], top, borderImgs[3].shape[0] - bottom, 0, borderImgs[3].shape[1])
 
         return cv.vconcat([borderImgs[0], cv.hconcat([borderImgs[2], trimmed, borderImgs[3]]), borderImgs[1]])
     else:
@@ -462,7 +481,7 @@ def addBlurredExtendBorder(src, top, bottom, left, right, blur): #add an extend 
     #blurred = cv.GaussianBlur(src, (blur[0], blur[1]), 2)
     #blurred = cv.blur(src, (blur[0], blur[1]))
     blurred = cv.copyMakeBorder(src, blur[1], blur[1], blur[0], blur[0], cv.BORDER_WRAP)
-    blurred = trimImage(cv.blur(blurred, (blur[0], blur[1])), blur[1], blurred.shape[0]-blur[1], blur[0], blurred.shape[1]-blur[0])
+    blurred = utilities.trimImage(cv.blur(blurred, (blur[0], blur[1])), blur[1], blurred.shape[0]-blur[1], blur[0], blurred.shape[1]-blur[0])
     blurred = cv.copyMakeBorder(blurred, round(top), round(bottom), round(left), round(right), cv.BORDER_REPLICATE)
     blurred = pasteImage(blurred, src, left, top)
     return blurred
@@ -470,10 +489,10 @@ def addBlurredExtendBorder(src, top, bottom, left, right, blur): #add an extend 
 def fixBadCorners(src): #replace the corners of the image with median blurred versions.
     blurred = cv.copyMakeBorder(src, CORNER_FIX_STREGNTH, CORNER_FIX_STREGNTH, CORNER_FIX_STREGNTH, CORNER_FIX_STREGNTH, cv.BORDER_WRAP)
     blurred = cv.medianBlur(blurred, CORNER_FIX_STREGNTH*2+1)
-    src = pasteImage(src, trimImage(blurred, CORNER_FIX_STREGNTH, CORNER_FIX_STREGNTH*3, CORNER_FIX_STREGNTH, CORNER_FIX_STREGNTH*3), 0, 0)
-    src = pasteImage(src, trimImage(blurred, blurred.shape[0]-CORNER_FIX_STREGNTH*3, blurred.shape[0]-CORNER_FIX_STREGNTH, CORNER_FIX_STREGNTH, CORNER_FIX_STREGNTH*3), 0, src.shape[0]-CORNER_FIX_STREGNTH*2)
-    src = pasteImage(src, trimImage(blurred, CORNER_FIX_STREGNTH, CORNER_FIX_STREGNTH*3, blurred.shape[1]-CORNER_FIX_STREGNTH*3, blurred.shape[1]-CORNER_FIX_STREGNTH), src.shape[1]-CORNER_FIX_STREGNTH*2, 0)
-    src = pasteImage(src, trimImage(blurred, blurred.shape[0]-CORNER_FIX_STREGNTH*3, blurred.shape[0]-CORNER_FIX_STREGNTH, blurred.shape[1]-CORNER_FIX_STREGNTH*3, blurred.shape[1]-CORNER_FIX_STREGNTH), src.shape[1]-CORNER_FIX_STREGNTH*2, src.shape[0]-CORNER_FIX_STREGNTH*2)
+    src = pasteImage(src, utilities.trimImage(blurred, CORNER_FIX_STREGNTH, CORNER_FIX_STREGNTH*3, CORNER_FIX_STREGNTH, CORNER_FIX_STREGNTH*3), 0, 0)
+    src = pasteImage(src, utilities.trimImage(blurred, blurred.shape[0]-CORNER_FIX_STREGNTH*3, blurred.shape[0]-CORNER_FIX_STREGNTH, CORNER_FIX_STREGNTH, CORNER_FIX_STREGNTH*3), 0, src.shape[0]-CORNER_FIX_STREGNTH*2)
+    src = pasteImage(src, utilities.trimImage(blurred, CORNER_FIX_STREGNTH, CORNER_FIX_STREGNTH*3, blurred.shape[1]-CORNER_FIX_STREGNTH*3, blurred.shape[1]-CORNER_FIX_STREGNTH), src.shape[1]-CORNER_FIX_STREGNTH*2, 0)
+    src = pasteImage(src, utilities.trimImage(blurred, blurred.shape[0]-CORNER_FIX_STREGNTH*3, blurred.shape[0]-CORNER_FIX_STREGNTH, blurred.shape[1]-CORNER_FIX_STREGNTH*3, blurred.shape[1]-CORNER_FIX_STREGNTH), src.shape[1]-CORNER_FIX_STREGNTH*2, src.shape[0]-CORNER_FIX_STREGNTH*2)
     return src
 
 def trimNegLine(pt1, pt2): #trim a line so it no longer goes below 0
@@ -653,9 +672,10 @@ def detectLines(img, threshold, side, debug, show): #find the 8-point lines in a
                         print("mid: " + str(mid))
     if corners and mid:
         if show:
-            cv.imshow("all lines for side " + str(side), allImg)
+            #cv.imshow("all lines for side " + str(side), allImg)
             if drawProImg:
-                cv.imshow("possible lines for side " + str(side), proImg)
+                pass
+                #cv.imshow("possible lines for side " + str(side), proImg)
         return corners, mid
     return None, None
 
@@ -675,14 +695,14 @@ def getLines(clean, edge, debug, show): #get the 9 points of the border
         cv.imshow("edges " + str(timesRun), edges)
 
     threshold = DEFAULT_H_THRESHOLD * edges.shape[1] #set line threshold based on image resolution
-    upCorners, upMid = detectLines(trimImage(np.copy(edges), MIN_LINE_EDGE, edge[0], 0, edges.shape[1]), threshold, 0, debug, show)
-    lowCorners, lowMid = detectLines(trimImage(np.copy(edges), edges.shape[0] - edge[1], edges.shape[0] - MIN_LINE_EDGE, 0, edges.shape[1]), threshold, 1, debug, show)
+    upCorners, upMid = detectLines(utilities.trimImage(np.copy(edges), MIN_LINE_EDGE, edge[0], 0, edges.shape[1]), threshold, 0, debug, show)
+    lowCorners, lowMid = detectLines(utilities.trimImage(np.copy(edges), edges.shape[0] - edge[1], edges.shape[0] - MIN_LINE_EDGE, 0, edges.shape[1]), threshold, 1, debug, show)
 
     threshold = DEFAULT_V_THRESHOLD * edges.shape[0]
-    leftCorners, leftMid = detectLines(trimImage(np.copy(edges), 0, edges.shape[0], MIN_LINE_EDGE, edge[2]), threshold, 2,
+    leftCorners, leftMid = detectLines(utilities.trimImage(np.copy(edges), 0, edges.shape[0], MIN_LINE_EDGE, edge[2]), threshold, 2,
                                        debug, show)
     rightCorners, rightMid = detectLines(
-        trimImage(np.copy(edges), 0, edges.shape[0], edges.shape[1] - edge[3], edges.shape[1] - MIN_LINE_EDGE), threshold, 3, debug,
+        utilities.trimImage(np.copy(edges), 0, edges.shape[0], edges.shape[1] - edge[3], edges.shape[1] - MIN_LINE_EDGE), threshold, 3, debug,
         show)
 
     with suppress(TypeError):
@@ -765,17 +785,17 @@ def getPointsFromLines(clean, edge, debug, show, manual, src):
         upLeft, upMid, upRight, leftMid, rightMid, lowLeft, lowMid, lowRight = taskbarFuncs.CustomBordersUI(src, upLeft, upMid, upRight, leftMid, rightMid, lowLeft, lowMid, lowRight)
     return upLeft, upMid, upRight, leftMid, rightMid, lowLeft, lowMid, lowRight
 
-def filterImage(hsvClean, adaptive, show):
+def filterImage(hsvClean, adaptive, filter, show):
     if adaptive: #an apative method that tried to take a chunk of the border and make a filter based on it.
-        borderBase = cv.vconcat([trimImage(hsvClean, MIN_ELEC_AVG_RANGE, MAX_ELEC_AVG_RANGE, MIN_ELEC_AVG_RANGE,
+        borderBase = cv.vconcat([utilities.trimImage(hsvClean, MIN_ELEC_AVG_RANGE, MAX_ELEC_AVG_RANGE, MIN_ELEC_AVG_RANGE,
                                            hsvClean.shape[1] - MIN_ELEC_AVG_RANGE),
-                                 trimImage(hsvClean, hsvClean.shape[0] - MAX_ELEC_AVG_RANGE,
+                                 utilities.trimImage(hsvClean, hsvClean.shape[0] - MAX_ELEC_AVG_RANGE,
                                            hsvClean.shape[0] - MIN_ELEC_AVG_RANGE, MIN_ELEC_AVG_RANGE,
                                            hsvClean.shape[1] - MIN_ELEC_AVG_RANGE)])
 
-        borderBaseV = cv.hconcat([trimImage(hsvClean, MIN_ELEC_AVG_RANGE, hsvClean.shape[0] - MIN_ELEC_AVG_RANGE,
+        borderBaseV = cv.hconcat([utilities.trimImage(hsvClean, MIN_ELEC_AVG_RANGE, hsvClean.shape[0] - MIN_ELEC_AVG_RANGE,
                                             MIN_ELEC_AVG_RANGE, MAX_ELEC_AVG_RANGE),
-                                  trimImage(hsvClean, MIN_ELEC_AVG_RANGE, hsvClean.shape[0] - MIN_ELEC_AVG_RANGE,
+                                  utilities.trimImage(hsvClean, MIN_ELEC_AVG_RANGE, hsvClean.shape[0] - MIN_ELEC_AVG_RANGE,
                                             hsvClean.shape[1] - MAX_ELEC_AVG_RANGE,
                                             hsvClean.shape[1] - MIN_ELEC_AVG_RANGE)])
         borderBaseV = cv.transpose(borderBaseV)  # make an image from the assumed borders of the image
@@ -797,21 +817,18 @@ def filterImage(hsvClean, adaptive, show):
             cv.imshow("adaptive clean", clean)
         return clean
     else: #a simpler method that tries to match a large range of yellow
-        taskbarFuncs.lowHue = 20
-        taskbarFuncs.hiHue = 30
-        taskbarFuncs.lowSat = 120
-        taskbarFuncs.hiSat = 255
-        taskbarFuncs.lowVal = 190
-        taskbarFuncs.hiVal = 255
+        taskbarFuncs.lowHue = filter[0]
+        taskbarFuncs.hiHue = filter[1]
+        taskbarFuncs.lowSat = filter[2]
+        taskbarFuncs.hiSat = filter[3]
+        taskbarFuncs.lowVal = filter[4]
+        taskbarFuncs.hiVal = filter[5]
+
         clean = cv.inRange(hsvClean, (taskbarFuncs.lowHue, taskbarFuncs.lowSat, taskbarFuncs.lowVal),
                            (taskbarFuncs.hiHue, taskbarFuncs.hiSat, taskbarFuncs.hiVal))
         if show:
             cv.imshow("basic clean", clean)
         return clean
-
-
-def trimImage(img, fromTop, newBot, fromLeft, newRight): #crop the image based on the supplied values
-    return img[fromTop:newBot, fromLeft:newRight]
 
 
 def calculateOuterAndInnerPoint(pnt, middle, extraSpace): #from point and midspace, get a matching outer point for mesh transform
@@ -837,8 +854,94 @@ def drawBox(img, upLeft, upMid, upRight, leftMid, rightMid, lowLeft, lowMid, low
     drawLineWithMid(img, upRight, lowRight, rightMid)
     return img
 
+def findMinMax(points, xmax, ymax):
+    xCol = None
+    yCol = None
+    for col in range(len(points[0])):
+        if xmax:
+            if yCol is None or points[1][col] > points[1][yCol]:
+                yCol = col
+            elif points[1][col] == points[1][yCol]:
+                if ymax and points[0][col] > points[0][yCol]:
+                    yCol = col
+                elif (not ymax) and points[0][col] < points[0][yCol]:
+                    yCol = col
+        else:
+            if yCol is None or points[1][col] < points[1][yCol]:
+                yCol = col
+            elif points[1][col] == points[1][yCol]:
+                if ymax and points[0][col] > points[0][yCol]:
+                    yCol = col
+                elif (not ymax) and points[0][col] < points[0][yCol]:
+                    yCol = col
+        if ymax:
+            if xCol is None or points[0][col] > points[0][xCol]:
+                xCol = col
+            elif points[0][col] == points[0][xCol]:
+                if xmax and points[1][col] > points[1][xCol]:
+                    xCol = col
+                elif (not xmax) and points[1][col] < points[1][xCol]:
+                    xCol = col
+        else:
+            if xCol is None or points[0][col] < points[0][xCol]:
+                xCol = col
+            elif points[0][col] == points[0][xCol]:
+                if xmax and points[1][col] > points[1][xCol]:
+                    xCol = col
+                elif (not xmax) and points[1][col] < points[1][xCol]:
+                    xCol = col
+    if xCol is not None and yCol is not None:
+        return (points[0][yCol], points[1][xCol])
+    return None
 
-def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, filter, blur, cb, trans, debug=False, show=False):
+def harrisCorrection(img, upLeft, upRight, lowLeft, lowRight, harSet):
+    simg = sharpen(img, 5, 0.28, 1)
+    gimg = np.float32(cv.cvtColor(simg, cv.COLOR_BGR2GRAY))
+    _, simg, _2 = cv.split(np.float32(cv.cvtColor(simg, cv.COLOR_BGR2HSV)))
+    gCorners = cv.cornerHarris(gimg, int(harSet[0]), int(harSet[1]), float(harSet[2]))
+    sCorners = cv.cornerHarris(simg, int(harSet[3]), int(harSet[4]), float(harSet[5]))
+    corners = np.logical_or(np.greater(sCorners, 0.1 * sCorners.max()), np.greater(gCorners, 0.074 * gCorners.max()))
+
+    TLR = [round(upLeft[1]), round(upLeft[0])]
+    TLCorners = np.vstack(np.nonzero(utilities.trimImage(corners, TLR[0] - 2, TLR[0] + 3, TLR[1] - 2, TLR[1] + 3)))
+    corTL = findMinMax(TLCorners, False, False)
+    if corTL is None:
+        corTL = upLeft
+    else:
+        corTL = (corTL[0] + TLR[0] - 2, corTL[1] + TLR[1] - 2)
+        corTL = [(corTL[1]+upLeft[0])/2, (corTL[0]+upLeft[1])/2]
+
+    TRR = [round(upRight[1]), round(upRight[0])]
+    TRCorners = np.vstack(np.nonzero(utilities.trimImage(corners, TRR[0] - 2, TRR[0] + 3, TRR[1] - 2, TRR[1] + 3)))
+    corTR = findMinMax(TRCorners, True, False)
+    if corTR is None:
+        corTR = upRight
+    else:
+        corTR = (corTR[0] + TRR[0] - 2, corTR[1] + TRR[1] - 1)
+        corTR = [(corTR[1]+upRight[0])/2, (corTR[0]+upRight[1])/2]
+    
+    BLR = [round(lowLeft[1]), round(lowLeft[0])]
+    BLCorners = np.vstack(np.nonzero(utilities.trimImage(corners, BLR[0] - 2, BLR[0] + 3, BLR[1] - 2, BLR[1] + 3)))
+    corBL = findMinMax(BLCorners, False, True)
+    if corBL is None:
+        corBL = lowLeft
+    else:
+        corBL = (corBL[0] + BLR[0] - 1, corBL[1] + BLR[1] - 2)
+        corBL = [(corBL[1]+lowLeft[0])/2, (corBL[0]+lowLeft[1])/2]
+
+    BRR = [round(lowRight[1]), round(lowRight[0])]
+    BRCorners = np.vstack(np.nonzero(utilities.trimImage(corners, BRR[0] - 2, BRR[0] + 3, BRR[1] - 2, BRR[1] + 3)))
+    corBR = findMinMax(BRCorners, True, True)
+    if corBR is None:
+        corBR = lowRight
+    else:
+        corBR = (corBR[0] + BRR[0] - 1, corBR[1] + BRR[1] - 1)
+        corBR = [(corBR[1] + lowRight[0]) / 2, (corBR[0] + lowRight[1]) / 2]
+
+    return corTL, corTR, corBL, corBR
+
+
+def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, filter, cusFilter, elec, harSet, blur, cb, doner, debug=False, show=False):
     src = cv.imread(cv.samples.findFile(baseImg))
     if src is None:
         print('Base Image at ' + baseImg + ' Not Found, skipping')
@@ -858,20 +961,20 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, filte
     hsvClean = cv.cvtColor(clean, cv.COLOR_BGR2HSV) #make a HSV version of clean for filtering
     elecCheck = cv.inRange(hsvClean, (20, 70, 0), (30, 255, 255)) #check the colour of the image to see if it's electric and needs tighter filters
     electric = False
-    if np.sum(elecCheck) > src.shape[0] * src.shape[1] * 128: #check only against the text of the image, to avoid the art throwing it off
+    if elec and np.sum(elecCheck) > src.shape[0] * src.shape[1] * 128: #check only against the text of the image, to avoid the art throwing it off
         electric = True
     if debug:
         print("image size: " + str(src.shape))
         print("edges " + str(edge))
         print("Electric: " + str(electric))
-    clean = filterImage(hsvClean, electric, show)
-    if filter:
-        clean = taskbarFuncs.HSVFilterUI(hsvClean) #set custom filter is enabled, does a normal filter first to get a sane default
-    upLeft, upMid, upRight, leftMid, rightMid, lowLeft, lowMid, lowRight = getPointsFromLines(clean, edge, debug, show, manual, src)
+    filtered = filterImage(hsvClean, electric, filter, show)
+    if cusFilter:
+        filtered = taskbarFuncs.HSVFilterUI(clean) #set custom filter is enabled, does a normal filter first to get a sane default
+    upLeft, upMid, upRight, leftMid, rightMid, lowLeft, lowMid, lowRight = getPointsFromLines(filtered, edge, debug, show, manual, src)
     if not (upLeft and upMid and upRight and leftMid and rightMid and lowLeft and lowMid and lowRight):
         print("Trying again with other filter...")
-        clean = filterImage(hsvClean, not electric, show)
-        upLeft, upMid, upRight, leftMid, rightMid, lowLeft, lowMid, lowRight = getPointsFromLines(clean, edge, debug, show, manual, src)
+        filtered = filterImage(hsvClean, not electric, filter, show)
+        upLeft, upMid, upRight, leftMid, rightMid, lowLeft, lowMid, lowRight = getPointsFromLines(filtered, edge, debug, show, manual, src)
         if not (upLeft and upMid and upRight and leftMid and rightMid and lowLeft and lowMid and lowRight):
             print("ERROR: 4 lines not found in image " + baseImg)
             if show:
@@ -890,7 +993,14 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, filte
 
     if show and not manual:
         edges = drawBox(np.copy(src), upLeft, upMid, upRight, leftMid, rightMid, lowLeft, lowMid, lowRight)
-        cv.imshow("4 main lines", edges)
+        cv.imshow("4 main lines pre cor", edges)
+
+    if harSet:
+        upLeft, upRight, lowLeft, lowRight = harrisCorrection(src, upLeft, upRight, lowLeft, lowRight, harSet)
+
+    if show and not manual:
+        edges = drawBox(np.copy(src), upLeft, upMid, upRight, leftMid, rightMid, lowLeft, lowMid, lowRight)
+        cv.imshow("4 main lines post cor", edges)
 
     upLeft = [upLeft[0] + offsetX, upLeft[1] + offsetY]
     upRight = [upRight[0] + offsetX, upRight[1] + offsetY]
@@ -953,6 +1063,8 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, filte
         calculateOuterAndInnerPoint(rightMid, midPoint, extraSpace) +
         calculateOuterAndInnerPoint(lowRight, midPoint, extraSpace), dtype="float64")
 
+    #srcP = np.round(srcP)
+
     dstP = np.array(
         calculateOuterAndInnerPoint([targetCard[2], targetCard[0]], targetMid, extraSpace) +
         calculateOuterAndInnerPoint([targetCard[2], targetMid[1]], targetMid, extraSpace) +
@@ -964,6 +1076,8 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, filte
         calculateOuterAndInnerPoint([targetCard[3], targetMid[1]], targetMid, extraSpace) +
         calculateOuterAndInnerPoint([targetCard[3], targetCard[1]], targetMid, extraSpace), dtype="float64")
 
+    dstP = np.round(dstP)
+
     if debug:
         print(srcP)
         print(dstP)
@@ -973,14 +1087,16 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, filte
     #src = cv.cvtColor(src, cv.COLOR_BGR2BGRA)
     #expand the border to fill the extra space
     bordered = addBlurredExtendBorder(src, round(offsetY), round(offsetY), round(offsetX), round(offsetX), blur)
+    #cv.imshow("prewarp", bordered)
     tform = PiecewiseAffineTransform()
     tform.estimate(dstP, srcP)
     # mesh transform the image into shape
     warped = img_as_ubyte(warp(bordered, tform, output_shape=(
     round(targetHeight + targetOffsetY * 2), round(targetWidth + targetOffsetX * 2))))
+    #cv.imshow("precut", warped)
 
     if trim:
-        warped = trimImage(math.floor(targetCard[0]), math.ceil(targetCard[1]), math.floor(targetCard[2]), math.ceil(targetCard[3]))
+        warped = utilities.trimImage(math.floor(targetCard[0]), math.ceil(targetCard[1]), math.floor(targetCard[2]), math.ceil(targetCard[3]))
     #calculate how much of the new image to trim off/add on to create the correct size border
     adjustNeeded = [round((targetCard[0] - border[0]) * Decimal(-1)),
                     round((targetCard[1] + border[1]) - warped.shape[0]),
@@ -996,26 +1112,32 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, filte
                                         max(0, adjustNeeded[3]), blur)
 
     warped = smoothBorders(warped, round(border[0]), round(border[1]), round(border[2]), round(border[3]), blur, cb)
-    if trans:
-        doner = cv.imread(cv.samples.findFile(trans))
-        if doner is None:
-            print('Doner Image at ' + trans + ' Not Found, skipping transfer')
-            images = [warped]
-        else:
-            LabDoner = cv.cvtColor(doner, cv.COLOR_BGR2LAB)
-            doner = doner/255
-            PCA = PCAColorTransfer(warped/255, doner)
-            oldLuma = getLuma(PCA)[:, :, np.newaxis]
-            sTransfer = setSaturation(PCA, getChroma(doner))
-            sTransfer = addLightness(sTransfer, oldLuma - getLuma(sTransfer)[:, :, np.newaxis])
-            cTransfer = addLightness(doner, getLuma(PCA)[:, :, np.newaxis] - getLuma(doner)[:, :, np.newaxis])
-            PCA[PCA > 1] = 1
-            PCA = cv.normalize(PCA, None, 0, 255, cv.NORM_MINMAX, cv.CV_8U)
-            images = [warped,
-                      cv.normalize(PCA, None, 0, 255, cv.NORM_MINMAX, cv.CV_8U),
-                      cv.normalize(sTransfer, None, 0, 255, cv.NORM_MINMAX, cv.CV_8U),
-                      cv.normalize(cTransfer, None, 0, 255, cv.NORM_MINMAX, cv.CV_8U)]
+    if doner is not None:
+        LBGRd = cv.cvtColor(cv.cvtColor(doner, cv.COLOR_BGR2LAB), cv.COLOR_LAB2LBGR)
+        LBGRw = cv.cvtColor(cv.cvtColor(warped, cv.COLOR_BGR2LAB), cv.COLOR_LAB2LBGR)
+        PCA = cv.normalize(PCAColorTransfer(LBGRw, LBGRd), None, 0, 255, cv.NORM_MINMAX, cv.CV_8U)
+        PCA = cv.cvtColor(cv.cvtColor(PCA, cv.COLOR_LBGR2LAB), cv.COLOR_LAB2BGR)/255
+        fDoner = doner / 255
+        aPCA = PCAColorTransfer(warped / 255, fDoner)
 
+        #oldLuma = getLuma(PCA)[:, :, np.newaxis]
+        # sTransfer = setSaturation(PCA, getChroma(fDoner))
+        # sTransfer = addLightness(sTransfer, oldLuma - getLuma(sTransfer)[:, :, np.newaxis])
+        cTransfer = addLightness(fDoner, getLuma(PCA)[:, :, np.newaxis] - getLuma(fDoner)[:, :, np.newaxis])
+
+        #sTransfer = boostContrast((utilities.clipToOne(sTransfer) * 255).astype(np.uint8), doner)
+        cTransfer = (utilities.clipToOne(cTransfer) * 255).astype(np.uint8)
+        PCA = (utilities.clipToOne(PCA) * 255).astype(np.uint8)
+        #blackfix = boostContrast(revertBlacks(PCA, doner, cTransfer), doner)
+        aPCA = boostContrast((utilities.clipToOne(aPCA) * 255).astype(np.uint8), doner)
+        PCA = boostContrast(PCA, doner)
+        cBoosted = boostContrast(cTransfer, doner)
+        images = [#warped,
+                  aPCA,
+                  PCA,
+                  #sTransfer,
+                  cTransfer,
+                  cBoosted]
     else:
         images = [warped]
 
@@ -1056,10 +1178,15 @@ def processArgs(inputText):
     res = [734, 1024]
     mask = None
     manual = False
-    filter = False
+    filter = [20, 30, 120, 255, 190, 255]
+    cusFilter = False
+    elec = True
     blur = [25, 25]
     cb = None
     trans = None
+    transFil = [21, 30, 28, 191, 173, 255] #151
+    harSet = None
+    dHarSet = None
 
     msg = "Improves old pokemon card scans"
     parser = argparse.ArgumentParser(description=msg)
@@ -1083,10 +1210,16 @@ def processArgs(inputText):
     parser.add_argument("-m", "--Mask", help="Mask the card using the provided mask.\n"
                                              "good for rounded corners.")
     parser.add_argument("-ma", "--Manual", help="Detect the edges manually. default: False")
-    parser.add_argument("-f", "--Filter", help="Bring up the filter menu to customise the filter used. default: False")
+    parser.add_argument("-f", "--Filter", help="set the HSV filter to use, in the horder of HiHue, LoHue, HiSat, LoSat, HiVal, LowVal. default: False")
+    parser.add_argument("-cf", "--CustomFilter", help="Bring up the filter menu to customise the filter used. default: 20,30,120,255,190,255")
+    parser.add_argument("-ed", "--ElectricDetection", help="Automatically switch to adaptive detection on yellow cards. default: True")
     parser.add_argument("-bb", "--BorderBlur", help="how much to blur the border, as so x,y. default: 25,25")
     parser.add_argument("-cb", "--CleanBorder", help="avoid sharpening the border, cleaning it instead. enable by setting tolerance like so t,b,l,r.")
     parser.add_argument("-ct", "--ColorTransfer", help="Transfer Colors from a render with with file or a similarly named one from this folder. default None")
+    parser.add_argument("-tf", "--TransferFilter", help="set the filter for correcting the borders of the image used for transfering. default not specified")
+    parser.add_argument("-ha", "--Harris", help="Use Harris corner detection to improve accuracy. arranged as such: greyBlock,greyKsize,greyK,satBlock,satKsize,satK")
+    parser.add_argument("-dh", "--DonerHarris",
+                        help="Use Harris corner detection to improve accuracy of the doner. arranged as such: greyBlock,greyKsize,greyK,satBlock,satKsize,satK")
 
     args = parser.parse_args()
 
@@ -1113,28 +1246,45 @@ def processArgs(inputText):
     if args.Manual:
         manual = args.Manual
     if args.Filter:
-        filter = args.Filter
+        filter = cb = processMultiArg(args.Filter, 6, False)
+    if args.CustomFilter:
+        cusFilter = args.CustomFilter
+    if args.ElectricDetection:
+        elec = args.ElectricDetection
     if args.BorderBlur:
         blur = processMultiArg(args.BorderBlur, 2, False)
     if args.CleanBorder:
         cb = processMultiArg(args.CleanBorder, 4, False)
     if args.ColorTransfer:
         trans = args.ColorTransfer
-    return input, clean, output, border, trim, edge, res, mask, manual, filter, blur, cb, trans, debug, show
+    if args.TransferFilter:
+        transFil = args.TransferFilter
+    if args.Harris:
+        harSet = processMultiArg(args.Harris, 6, True)
+    if args.DonerHarris:
+        dHarSet = processMultiArg(args.DonerHarris, 6, True)
+    return input, clean, output, border, trim, edge, res, mask, manual, filter, cusFilter, elec, harSet, dHarSet, blur, cb, trans, transFil, debug, show
 
 def getCacheFilename(transPath, inputPath):
     iBase = os.path.basename(inputPath)
-    numStr = re.search("^0*(\d+)", iBase)[1]
+    numStr = re.search("^0*(\d+)", iBase)
+    tPath = os.path.dirname(transPath)
     if numStr:
-        tPath = os.path.dirname(transPath)
-        return os.path.join(tPath, numStr + ".png")
+        return os.path.join(tPath, numStr[1] + ".png")
     else:
-        print("ERROR: no match for cache filename for " + inputPath)
-        return None
+        return os.path.join(tPath, iBase)
 
-def resolveImage(input, clean, output, border, trim, edge, res, mask, manual, filter, blur, cb, trans, debug, show):
+
+def resolveImage(input, clean, output, border, trim, edge, res, mask, manual, filter, cusFilter, elec, harSet, dHarSet, blur, cb, trans, transFil, debug, show):
+    doner = None
+    if trans:
+        if os.path.isfile(trans):
+            print("processing " + trans)
+            doner = processImage(trans, None, border, False, [35,35,35,35], res, None, False, transFil, cusFilter, False, dHarSet, [3, 3], None, None, debug, False)[0]
+        else:
+            print("doner file " + trans + "not found, skipping transfer.")
     print("processing " + input)
-    images = processImage(input, clean, border, trim, edge, res, mask, manual, filter, blur, cb, trans, debug, show)
+    images = processImage(input, clean, border, trim, edge, res, mask, manual, filter, cusFilter, elec, harSet, blur, cb, doner, debug, show)
     if images is not None:
         count = 1
         for image in images:
@@ -1145,7 +1295,7 @@ def resolveImage(input, clean, output, border, trim, edge, res, mask, manual, fi
                 count += 1
 
 
-def processFolder(input, clean, output, border, trim, edge, res, mask, manual, filter, blur, cb, trans, debug, show):
+def processFolder(input, clean, output, border, trim, edge, res, mask, manual, filter, cusFilter, elec, harSet, dHarSet, blur, cb, trans, transFil, debug, show):
     with suppress(FileExistsError):
         os.mkdir(output)
     with os.scandir(input) as entries:
@@ -1153,22 +1303,30 @@ def processFolder(input, clean, output, border, trim, edge, res, mask, manual, f
             cleanPath = None
             inputPath = os.path.join(input, entry.name)
             outputPath = os.path.join(output, entry.name)
-            transPath = os.path.join(trans, entry.name)
+            if trans:
+                transPath = os.path.join(trans, entry.name)
+            else:
+                transPath = None
             if clean:
                 cleanPath = os.path.join(clean, entry.name)
             if os.path.isfile(inputPath) and entry.name != "Place Images Here":
-                transPath = getCacheFilename(transPath, inputPath)
-                resolveImage(inputPath, cleanPath, outputPath, border, trim, edge, res, mask, manual, filter, blur, cb, transPath, debug, show)
+                if transPath:
+                    transPath = getCacheFilename(transPath, inputPath)
+                resolveImage(inputPath, cleanPath, outputPath, border, trim, edge, res, mask, manual, filter, cusFilter, elec, harSet, dHarSet, blur, cb, transPath, transFil, debug, show)
             elif os.path.isdir(inputPath):
-                processFolder(inputPath, cleanPath, outputPath, border, trim, edge, res, mask, manual, filter, blur, cb, transPath, debug, show)
+                processFolder(inputPath, cleanPath, outputPath, border, trim, edge, res, mask, manual, filter, cusFilter, elec, harSet, dHarSet, blur, cb, transPath, transFil, debug, show)
 
 
 def main():
-    input, clean, output, border, trim, edge, res, mask, manual, filter, blur, cb, trans, debug, show = processArgs("folder")
+    input, clean, output, border, trim, edge, res, mask, manual, filter, cusFilter, elec, harSet, dHarSet, blur, cb, trans, transFil, debug, show = processArgs("folder")
     if os.path.isfile(input):
-        resolveImage(input, clean, output, border, trim, edge, res, mask, manual, filter, blur, cb, trans, debug, show)
+        if trans:
+            transPath = getCacheFilename(trans, input)
+        else:
+            transPath = None
+        resolveImage(input, clean, output, border, trim, edge, res, mask, manual, filter, cusFilter, elec, harSet, dHarSet, blur, cb, transPath, transFil, debug, show)
     elif os.path.isdir(input):
-        processFolder(input, clean, output, border, trim, edge, res, mask, manual, filter, blur, cb, trans, debug, show)
+        processFolder(input, clean, output, border, trim, edge, res, mask, manual, filter, cusFilter, elec, harSet, dHarSet, blur, cb, trans, transFil, debug, show)
     else:
         print("Input file not found.")
 

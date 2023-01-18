@@ -106,7 +106,7 @@ def hiHueTrackbar(val):
     global hiHue
     hiHue = val
     hiHue = max(hiHue, lowHue + 1)
-    cv.setTrackbarPos("hiHue", TRACKBAR_WINDOW_NAME, hiHue)
+    cv.setTrackbarPos("HiHue", TRACKBAR_WINDOW_NAME, hiHue)
 
 
 def lowSatTrackbar(val):
@@ -122,7 +122,7 @@ def hiSatTrackbar(val):
     global hiSat
     hiSat = val
     hiSat = max(hiSat, lowSat + 1)
-    cv.setTrackbarPos("hiSat", TRACKBAR_WINDOW_NAME, hiSat)
+    cv.setTrackbarPos("HiSat", TRACKBAR_WINDOW_NAME, hiSat)
 
 
 def lowValTrackbar(val):
@@ -130,7 +130,7 @@ def lowValTrackbar(val):
     global hiVal
     lowVal = val
     lowVal = min(hiVal - 1, lowVal)
-    cv.setTrackbarPos("lowVal", TRACKBAR_WINDOW_NAME, lowVal)
+    cv.setTrackbarPos("LowVal", TRACKBAR_WINDOW_NAME, lowVal)
 
 
 def hiValTrackbar(val):
@@ -138,7 +138,7 @@ def hiValTrackbar(val):
     global hiVal
     hiVal = val
     hiVal = max(hiVal, lowVal + 1)
-    cv.setTrackbarPos("hiVal", TRACKBAR_WINDOW_NAME, hiVal)
+    cv.setTrackbarPos("HiVal", TRACKBAR_WINDOW_NAME, hiVal)
 
 
 def toggleLines(a, b):
@@ -222,26 +222,34 @@ def CustomBordersUI(src, upLeft, upMid, upRight, leftMid, rightMid, lowLeft, low
                    [Decimal(posDict["BMX"]), Decimal(posDict["BMY"])],\
                    [Decimal(posDict["BRX"]), Decimal(posDict["BRY"])]
 
-def HSVFilterUI(hsvClean): #load a UI for setting a custom filter
+def HSVFilterUI(clean): #load a UI for setting a custom filter
+    hsvClean = cv.cvtColor(clean, cv.COLOR_BGR2HSV)
     global declared
     cv.namedWindow(TRACKBAR_WINDOW_NAME)
     if not declared:
-        cv.createTrackbar("hiHue", TRACKBAR_WINDOW_NAME, hiHue, 180, hiHueTrackbar)
-        cv.createTrackbar("LowHue", TRACKBAR_WINDOW_NAME, lowHue, 255, lowHueTrackbar)
-        cv.createTrackbar("HiSat", TRACKBAR_WINDOW_NAME, hiSat, 255, hiSatTrackbar)
+        cv.createTrackbar("LowHue", TRACKBAR_WINDOW_NAME, lowHue, 180, lowHueTrackbar)
+        cv.createTrackbar("HiHue", TRACKBAR_WINDOW_NAME, hiHue, 180, hiHueTrackbar)
         cv.createTrackbar("LoSat", TRACKBAR_WINDOW_NAME, lowSat, 255, lowSatTrackbar)
-        cv.createTrackbar("HiVal", TRACKBAR_WINDOW_NAME, hiVal, 255, hiValTrackbar)
+        cv.createTrackbar("HiSat", TRACKBAR_WINDOW_NAME, hiSat, 255, hiSatTrackbar)
         cv.createTrackbar("LoVal", TRACKBAR_WINDOW_NAME, lowVal, 255, lowValTrackbar)
+        cv.createTrackbar("HiVal", TRACKBAR_WINDOW_NAME, hiVal, 255, hiValTrackbar)
         cv.createButton("Toggle Lines", toggleLines)
         cv.namedWindow("manual preview", cv.WINDOW_NORMAL)
         declared = True
+    else:
+        cv.setTrackbarPos("LowHue", TRACKBAR_WINDOW_NAME, lowHue)
+        cv.setTrackbarPos("HiHue", TRACKBAR_WINDOW_NAME, hiHue)
+        cv.setTrackbarPos("LoSat", TRACKBAR_WINDOW_NAME, lowSat)
+        cv.setTrackbarPos("HiSat", TRACKBAR_WINDOW_NAME, hiSat)
+        cv.setTrackbarPos("LoVal", TRACKBAR_WINDOW_NAME, lowVal)
+        cv.setTrackbarPos("HiVal", TRACKBAR_WINDOW_NAME, hiVal)
     blank = np.zeros(shape=[3, 600], dtype=np.uint8)
 
     while True:
-        clean = cv.inRange(hsvClean, (lowHue, lowSat, lowVal), (hiHue, hiSat, hiVal))
-        preview = cv.medianBlur(clean, 3)
+        newClean = cv.inRange(hsvClean, (lowHue, lowSat, lowVal), (hiHue, hiSat, hiVal))
+        preview = np.bitwise_and(cv.medianBlur(newClean, 3)[:, :, np.newaxis], clean)
         cv.imshow(TRACKBAR_WINDOW_NAME, blank)
         cv.imshow("manual preview", preview)
         key = cv.waitKey(30)
         if key == ord('q') or key == 27:
-            return clean
+            return newClean

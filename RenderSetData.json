@@ -1,0 +1,191 @@
+[
+  {
+    "folderName" : "ex-hidden-legends",
+    "setSize" : 102,
+    "setCode" : "EX5",
+    "borders": {
+      "top" : 10,
+      "bottom" : 8,
+      "left" : 9,
+      "right" : 9
+    }
+  },
+  {
+    "folderName" : "ex-team-magma-team-aqua",
+    "setSize" : 97,
+    "setCode" : "EX4",
+    "borders": {
+      "top" : 10,
+      "bottom" : 9,
+      "left" : 9,
+      "right" : 9
+    }
+  },
+  {
+    "folderName" : "ex-team-rocket-returns",
+    "setSize" : 111,
+    "setCode" : "EX7",
+    "borders": {
+      "top" : 10,
+      "bottom" : 9,
+      "left" : 9,
+      "right" : 9
+    }
+  },
+  {
+    "folderName" : "ex-deoxys",
+    "setSize" : 108,
+    "setCode" : "EX8",
+    "borders": {
+      "top" : 9,
+      "bottom" : 9,
+      "left" : 9,
+      "right" : 9
+    }
+  },
+  {
+    "folderName" : "ex-emerald",
+    "setSize" : 107,
+    "setCode" : "EX9",
+    "borders": {
+      "top" : 9,
+      "bottom" : 9,
+      "left" : 9,
+      "right" : 9
+    }
+  },
+  {
+    "folderName" : "ex-unseen-forces",
+    "setSize" : 117,
+    "setCode" : "EX10",
+    "unowns" : true,
+    "borders": {
+      "top" : 9,
+      "bottom" : 9,
+      "left" : 9,
+      "right" : 9
+    }
+  },
+  {
+    "folderName" : "ex-delta-species",
+    "setSize" : 114,
+    "setCode" : "EX11",
+    "borders": {
+      "top" : 9,
+      "bottom" : 9,
+      "left" : 9,
+      "right" : 9
+    }
+  },
+  {
+    "folderName" : "ex-legend-maker",
+    "setSize" : 93,
+    "setCode" : "EX12",
+    "borders": {
+      "top" : 9,
+      "bottom" : 9,
+      "left" : 9,
+      "right" : 9
+    }
+  },
+  {
+    "folderName" : "ex-holon-phantoms",
+    "setSize" : 111,
+    "setCode" : "EX13",
+    "borders": {
+      "top" : 9,
+      "bottom" : 9,
+      "left" : 9,
+      "right" : 9
+    }
+  },
+  {
+    "folderName" : "ex-crystal-guardians",
+    "setSize" : 100,
+    "setCode" : "EX14",
+    "borders": {
+      "top" : 9,
+      "bottom" : 9,
+      "left" : 10,
+      "right" : 10
+    }
+  },
+  {
+    "folderName" : "ex-dragon-frontiers",
+    "setSize" : 101,
+    "setCode" : "EX15",
+    "borders": {
+      "top" : 9,
+      "bottom" : 9,
+      "left" : 9,
+      "right" : 9
+    }
+  },
+  {
+    "folderName" : "ex-power-keepers",
+    "setSize" : 108,
+    "setCode" : "EX16",
+    "borders": {
+      "top" : 9,
+      "bottom" : 9,
+      "left" : 9,
+      "right" : 9
+    }
+  },
+  {
+    "folderName" : "pokemon-organized-play-series-1",
+    "setSize" : 17,
+    "setCode" : "POP1",
+    "borders": {
+      "top" : 10,
+      "bottom" : 8,
+      "left" : 9,
+      "right" : 9
+    }
+  },
+  {
+    "folderName" : "pokemon-organized-play-series-2",
+    "setSize" : 17,
+    "setCode" : "POP2",
+    "fileName" : "POP Series 2",
+    "borders": {
+      "top" : 9,
+      "bottom" : 9,
+      "left" : 9,
+      "right" : 9
+    }
+  },
+  {
+    "folderName" : "pokemon-organized-play-series-3",
+    "setSize" : 17,
+    "setCode" : "POP3",
+    "borders": {
+      "top" : 9,
+      "bottom" : 9,
+      "left" : 9,
+      "right" : 9
+    }
+  },
+  {
+    "folderName" : "pokemon-organized-play-series-4",
+    "setSize" : 17,
+    "setCode" : "POP4",
+    "borders": {
+      "top" : 9,
+      "bottom" : 9,
+      "left" : 9,
+      "right" : 9
+    }
+  },
+  {
+    "folderName" : "pokemon-organized-play-series-5",
+    "setSize" : 17,
+    "setCode" : "POP5",
+    "borders": {
+      "top" : 8,
+      "bottom" : 8,
+      "left" : 9,
+      "right" : 8
+    }
+  }
+]

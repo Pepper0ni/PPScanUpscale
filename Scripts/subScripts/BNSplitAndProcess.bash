@@ -6,15 +6,15 @@ mkdir -p ./balanced/;
 python3 ./splitByValue.py -i $1
 
 for f in $(find ./light -name "*.png" -type f); do
- bash ./PostProcessNormal.bash $f
+ bash ./Scripts/subScripts/BNPostProcessNormal.bash $f
 done
 
 for f in $(find ./balanced -name "*.png" -type f); do
- bash ./PostProcessGentle.bash $f
+ bash ./Scripts/subScripts/BNPostProcessGentle.bash $f
 done
 
 for f in $(find ./dark -name "*.png" -type f); do
- bash ./PostProcessNoGamma.bash $f
+ bash ./Scripts/subScripts/BNPostProcessNoGamma.bash $f
 done
 
 rm -r ./light/
