@@ -98,13 +98,20 @@ def addLightness(img, light):
     #print(np.max(Limg))
     return Limg
 
-def revertBlacks(og, doner, mod):
+def revertBadHue(og, mod):
+    # ogH, ogS, ogV = cv.split(cv.cvtColor(og, cv.COLOR_BGR2HSV))
+    # modH, modS, modV = cv.split(cv.cvtColor(mod, cv.COLOR_BGR2HSV))
+    # fixed = np.where(np.logical_or(np.less(np.subtract(ogH, modH), 15), np.greater(np.subtract(ogH, modH), 240))[:, :, np.newaxis], mod, og)
+    # fixedH, fixedS, fixedV = cv.split(cv.cvtColor(fixed, cv.COLOR_BGR2HSV))
+    # #return fixed
+    # return cv.cvtColor(cv.merge([fixedH, fixedS, fixedV]), cv.COLOR_HSV2BGR)
+
     ogH, ogS, ogV = cv.split(cv.cvtColor(og, cv.COLOR_BGR2HSV))
     modH, modS, modV = cv.split(cv.cvtColor(mod, cv.COLOR_BGR2HSV))
-    donerH, donerS, donerV = cv.split(cv.cvtColor(doner, cv.COLOR_BGR2HSV))
-    fixed = np.where(np.logical_xor(np.less(ogV, 20), np.less(donerV, 20))[:, :, np.newaxis], og, mod)
-    return fixed
-    #return cv.cvtColor(cv.merge([modH, modS, fixedV]), cv.COLOR_HSV2BGR)
+    fixed = np.where(np.logical_or(np.less(np.subtract(ogH, modH), 5), np.greater(np.subtract(ogH, modH), 250))[:, :, np.newaxis], mod, og)
+    fixedH, fixedS, fixedV = cv.split(cv.cvtColor(fixed, cv.COLOR_BGR2HSV))
+    #return fixed
+    return cv.cvtColor(cv.merge([fixedH, fixedS, modV]), cv.COLOR_HSV2BGR)
 
 def BGR2HSY(img):
     B, G, R = cv.split(img)
@@ -672,10 +679,10 @@ def detectLines(img, threshold, side, debug, show): #find the 8-point lines in a
                         print("mid: " + str(mid))
     if corners and mid:
         if show:
-            #cv.imshow("all lines for side " + str(side), allImg)
+            cv.imshow("all lines for side " + str(side), allImg)
             if drawProImg:
-                pass
-                #cv.imshow("possible lines for side " + str(side), proImg)
+                #pass
+                cv.imshow("possible lines for side " + str(side), proImg)
         return corners, mid
     return None, None
 
@@ -894,6 +901,23 @@ def findMinMax(points, xmax, ymax):
         return (points[0][yCol], points[1][xCol])
     return None
 
+def handleCorner(basePos, corners, xmax, ymax):
+    rounded = [round(basePos[1]), round(basePos[0])]
+    locCorner = np.vstack(np.nonzero(utilities.trimImage(corners, rounded[0] - 2, rounded[0] + 3, rounded[1] - 2, rounded[1] + 3)))
+    minMaxCor = findMinMax(locCorner, xmax, ymax)
+    if minMaxCor is None:
+        return [0, 0]
+    else:
+        xside = 1
+        if xmax:
+            xside = 2
+        yside = 1
+        if ymax:
+            yside = 2
+        finalCor = (minMaxCor[0] + rounded[0] - yside, minMaxCor[1] + rounded[1] - xside)
+        finalCor = [(finalCor[1]+basePos[0])/2, (finalCor[0]+basePos[1])/2]
+        return [Decimal((finalCor[0] - basePos[0]) / 2), Decimal((finalCor[1] - basePos[1]) / 2)]
+
 def harrisCorrection(img, upLeft, upRight, lowLeft, lowRight, harSet):
     simg = sharpen(img, 5, 0.28, 1)
     gimg = np.float32(cv.cvtColor(simg, cv.COLOR_BGR2GRAY))
@@ -902,41 +926,46 @@ def harrisCorrection(img, upLeft, upRight, lowLeft, lowRight, harSet):
     sCorners = cv.cornerHarris(simg, int(harSet[3]), int(harSet[4]), float(harSet[5]))
     corners = np.logical_or(np.greater(sCorners, 0.1 * sCorners.max()), np.greater(gCorners, 0.074 * gCorners.max()))
 
-    TLR = [round(upLeft[1]), round(upLeft[0])]
-    TLCorners = np.vstack(np.nonzero(utilities.trimImage(corners, TLR[0] - 2, TLR[0] + 3, TLR[1] - 2, TLR[1] + 3)))
-    corTL = findMinMax(TLCorners, False, False)
-    if corTL is None:
-        corTL = upLeft
-    else:
-        corTL = (corTL[0] + TLR[0] - 2, corTL[1] + TLR[1] - 2)
-        corTL = [(corTL[1]+upLeft[0])/2, (corTL[0]+upLeft[1])/2]
+    corTL = handleCorner(upLeft, corners, False, False)
+    corTR = handleCorner(upRight, corners, True, False)
+    corBL = handleCorner(lowLeft, corners, False, True)
+    corBR = handleCorner(lowRight, corners, True, True)
 
-    TRR = [round(upRight[1]), round(upRight[0])]
-    TRCorners = np.vstack(np.nonzero(utilities.trimImage(corners, TRR[0] - 2, TRR[0] + 3, TRR[1] - 2, TRR[1] + 3)))
-    corTR = findMinMax(TRCorners, True, False)
-    if corTR is None:
-        corTR = upRight
-    else:
-        corTR = (corTR[0] + TRR[0] - 2, corTR[1] + TRR[1] - 1)
-        corTR = [(corTR[1]+upRight[0])/2, (corTR[0]+upRight[1])/2]
-    
-    BLR = [round(lowLeft[1]), round(lowLeft[0])]
-    BLCorners = np.vstack(np.nonzero(utilities.trimImage(corners, BLR[0] - 2, BLR[0] + 3, BLR[1] - 2, BLR[1] + 3)))
-    corBL = findMinMax(BLCorners, False, True)
-    if corBL is None:
-        corBL = lowLeft
-    else:
-        corBL = (corBL[0] + BLR[0] - 1, corBL[1] + BLR[1] - 2)
-        corBL = [(corBL[1]+lowLeft[0])/2, (corBL[0]+lowLeft[1])/2]
-
-    BRR = [round(lowRight[1]), round(lowRight[0])]
-    BRCorners = np.vstack(np.nonzero(utilities.trimImage(corners, BRR[0] - 2, BRR[0] + 3, BRR[1] - 2, BRR[1] + 3)))
-    corBR = findMinMax(BRCorners, True, True)
-    if corBR is None:
-        corBR = lowRight
-    else:
-        corBR = (corBR[0] + BRR[0] - 1, corBR[1] + BRR[1] - 1)
-        corBR = [(corBR[1] + lowRight[0]) / 2, (corBR[0] + lowRight[1]) / 2]
+    # TLR = [round(upLeft[1]), round(upLeft[0])]
+    # TLCorners = np.vstack(np.nonzero(utilities.trimImage(corners, TLR[0] - 2, TLR[0] + 3, TLR[1] - 2, TLR[1] + 3)))
+    # corTL = findMinMax(TLCorners, False, False)
+    # if corTL is None:
+    #     corTL = [0, 0]
+    # else:
+    #     corTL = (corTL[0] + TLR[0] - 2, corTL[1] + TLR[1] - 2)
+    #     corTL = [(corTL[1]+upLeft[0])/2, (corTL[0]+upLeft[1])/2]
+    #
+    # TRR = [round(upRight[1]), round(upRight[0])]
+    # TRCorners = np.vstack(np.nonzero(utilities.trimImage(corners, TRR[0] - 2, TRR[0] + 3, TRR[1] - 2, TRR[1] + 3)))
+    # corTR = findMinMax(TRCorners, True, False)
+    # if corTR is None:
+    #     corTR = upRight
+    # else:
+    #     corTR = (corTR[0] + TRR[0] - 2, corTR[1] + TRR[1] - 1)
+    #     corTR = [(corTR[1]+upRight[0])/2, (corTR[0]+upRight[1])/2]
+    #
+    # BLR = [round(lowLeft[1]), round(lowLeft[0])]
+    # BLCorners = np.vstack(np.nonzero(utilities.trimImage(corners, BLR[0] - 2, BLR[0] + 3, BLR[1] - 2, BLR[1] + 3)))
+    # corBL = findMinMax(BLCorners, False, True)
+    # if corBL is None:
+    #     corBL = lowLeft
+    # else:
+    #     corBL = (corBL[0] + BLR[0] - 1, corBL[1] + BLR[1] - 2)
+    #     corBL = [(corBL[1]+lowLeft[0])/2, (corBL[0]+lowLeft[1])/2]
+    #
+    # BRR = [round(lowRight[1]), round(lowRight[0])]
+    # BRCorners = np.vstack(np.nonzero(utilities.trimImage(corners, BRR[0] - 2, BRR[0] + 3, BRR[1] - 2, BRR[1] + 3)))
+    # corBR = findMinMax(BRCorners, True, True)
+    # if corBR is None:
+    #     corBR = lowRight
+    # else:
+    #     corBR = (corBR[0] + BRR[0] - 1, corBR[1] + BRR[1] - 1)
+    #     corBR = [(corBR[1] + lowRight[0]) / 2, (corBR[0] + lowRight[1]) / 2]
 
     return corTL, corTR, corBL, corBR
 
@@ -996,7 +1025,22 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, filte
         cv.imshow("4 main lines pre cor", edges)
 
     if harSet:
-        upLeft, upRight, lowLeft, lowRight = harrisCorrection(src, upLeft, upRight, lowLeft, lowRight, harSet)
+        ULChange, URChange, LLChange, LRChange = harrisCorrection(src, upLeft, upRight, lowLeft, lowRight, harSet)
+
+    upLeft = upLeft + ULChange
+    upRight = upRight + URChange
+    lowLeft = lowLeft + LLChange
+    lowRight = lowRight + LRChange
+
+    upMidMulti = Decimal((upMid[0] - upLeft[0]) / (upRight[0] - upLeft[0]))
+    lowMidMulti = Decimal((lowMid[0] - lowLeft[0]) / (lowRight[0] - lowLeft[0]))
+    leftMidMulti = Decimal((leftMid[1] - upLeft[1]) / (lowLeft[1] - upLeft[1]))
+    rightMidMulti = Decimal((rightMid[1] - upRight[1]) / (lowRight[1] - upRight[1]))
+    
+    upMid = [upMid[0], upMid[1] + (URChange[1] * upMidMulti) + (ULChange[1] * (1 - upMidMulti))]
+    lowMid = [lowMid[0], lowMid[1] + (LRChange[1] * lowMidMulti) + (LLChange[1] * (1 - lowMidMulti))]
+    leftMid = [leftMid[0] + (LLChange[0] * leftMidMulti) + (ULChange[0] * (1 - leftMidMulti)), leftMid[1]]
+    rightMid = [rightMid[0] + (LLChange[0] * rightMidMulti) + (ULChange[0] * (1 - rightMidMulti)), rightMid[1]]
 
     if show and not manual:
         edges = drawBox(np.copy(src), upLeft, upMid, upRight, leftMid, rightMid, lowLeft, lowMid, lowRight)
@@ -1009,10 +1053,15 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, filte
     cardWidth = max(upRight[0] - upLeft[0], lowRight[0] - lowLeft[0])
     cardHeight = max(lowRight[1] - upRight[1], lowLeft[1] - upLeft[1])
 
-    upMid = [(upLeft[0] + upRight[0]) / 2, upMid[1] + offsetY]
-    lowMid = [(lowLeft[0] + lowRight[0]) / 2, lowMid[1] + offsetY]
-    leftMid = [leftMid[0] + offsetX, (lowLeft[1] + upLeft[1]) / 2]
-    rightMid = [rightMid[0] + offsetX, (lowRight[1] + upRight[1]) / 2]
+    # upMid = [(upLeft[0] + upRight[0]) / 2, upMid[1] + offsetY]
+    # lowMid = [(lowLeft[0] + lowRight[0]) / 2, lowMid[1] + offsetY]
+    # leftMid = [leftMid[0] + offsetX, (lowLeft[1] + upLeft[1]) / 2]
+    # rightMid = [rightMid[0] + offsetX, (lowRight[1] + upRight[1]) / 2]
+
+    upMid = [upMid[0] + offsetX, upMid[1] + offsetY]
+    lowMid = [lowMid[0] + offsetX, lowMid[1] + offsetY]
+    leftMid = [leftMid[0] + offsetX, leftMid[1] + offsetY]
+    rightMid = [rightMid[0] + offsetX, rightMid[1] + offsetY]
     midPoint = [(leftMid[0] + rightMid[0]) / 2, (upMid[1] + lowMid[1]) / 2]
 
     if debug:
@@ -1043,6 +1092,11 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, filte
     targetCard = [targetOffsetY, targetOffsetY + targetHeight, targetOffsetX, targetOffsetX + targetWidth]
     targetMid = (Decimal(targetWidth * (Decimal(0.5) + extraSpace[0])), Decimal(targetHeight * (Decimal(0.5) + extraSpace[1])))
 
+    targetUpMid = [targetWidth * upMidMulti + targetOffsetX, targetCard[0]]
+    targetLowMid = [targetWidth * lowMidMulti + targetOffsetX, targetCard[1]]
+    targetLeftMid = [targetCard[2], targetHeight * leftMidMulti + targetOffsetY] #663 677
+    targetRightMid = [targetCard[3], targetHeight * rightMidMulti + targetOffsetY]
+
     if debug:
         print("border: " + str(border))
         print("extraSpace: " + str(extraSpace))
@@ -1050,6 +1104,12 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, filte
         print("targethieght: " + str(targetHeight))
         print("targetmid: " + str(targetMid))
         print("targetcard: " + str(targetCard))
+        print("targetUpMid: " + str(targetUpMid))
+        print("targetLowMid: " + str(targetLowMid))
+        print("targetLeftMid: " + str(targetLeftMid))
+        print("targetRightMid: " + str(targetRightMid))
+        print("targetOffsetX: " + str(targetOffsetX))
+        print("targetOffsetY: " + str(targetOffsetY))
     #create arrays in scipy compatible format
     #np.set_printoptions(suppress=True)
     srcP = np.array(
@@ -1067,13 +1127,13 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, filte
 
     dstP = np.array(
         calculateOuterAndInnerPoint([targetCard[2], targetCard[0]], targetMid, extraSpace) +
-        calculateOuterAndInnerPoint([targetCard[2], targetMid[1]], targetMid, extraSpace) +
+        calculateOuterAndInnerPoint(targetLeftMid, targetMid, extraSpace) +
         calculateOuterAndInnerPoint([targetCard[2], targetCard[1]], targetMid, extraSpace) +
-        calculateOuterAndInnerPoint([targetMid[0], targetCard[1]], targetMid, extraSpace) +
+        calculateOuterAndInnerPoint(targetLowMid, targetMid, extraSpace) +
         [targetMid] +
-        calculateOuterAndInnerPoint([targetMid[0], targetCard[0]], targetMid, extraSpace) +
+        calculateOuterAndInnerPoint(targetUpMid, targetMid, extraSpace) +
         calculateOuterAndInnerPoint([targetCard[3], targetCard[0]], targetMid, extraSpace) +
-        calculateOuterAndInnerPoint([targetCard[3], targetMid[1]], targetMid, extraSpace) +
+        calculateOuterAndInnerPoint(targetRightMid, targetMid, extraSpace) +
         calculateOuterAndInnerPoint([targetCard[3], targetCard[1]], targetMid, extraSpace), dtype="float64")
 
     dstP = np.round(dstP)
@@ -1081,8 +1141,8 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, filte
     if debug:
         print(srcP)
         print(dstP)
-        print(offsetX)
-        print(offsetY)
+        print("offsetX: " + str(offsetX))
+        print("offsetY: " + str(offsetY))
 
     #src = cv.cvtColor(src, cv.COLOR_BGR2BGRA)
     #expand the border to fill the extra space
@@ -1123,21 +1183,21 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, filte
         #oldLuma = getLuma(PCA)[:, :, np.newaxis]
         # sTransfer = setSaturation(PCA, getChroma(fDoner))
         # sTransfer = addLightness(sTransfer, oldLuma - getLuma(sTransfer)[:, :, np.newaxis])
-        cTransfer = addLightness(fDoner, getLuma(PCA)[:, :, np.newaxis] - getLuma(fDoner)[:, :, np.newaxis])
+        cTransfer = addLightness(fDoner, getLuma(aPCA)[:, :, np.newaxis] - getLuma(fDoner)[:, :, np.newaxis])
 
         #sTransfer = boostContrast((utilities.clipToOne(sTransfer) * 255).astype(np.uint8), doner)
         cTransfer = (utilities.clipToOne(cTransfer) * 255).astype(np.uint8)
         PCA = (utilities.clipToOne(PCA) * 255).astype(np.uint8)
-        #blackfix = boostContrast(revertBlacks(PCA, doner, cTransfer), doner)
-        aPCA = boostContrast((utilities.clipToOne(aPCA) * 255).astype(np.uint8), doner)
+        aPCA = (utilities.clipToOne(aPCA) * 255).astype(np.uint8)
+        aPCA = boostContrast(aPCA, doner)
         PCA = boostContrast(PCA, doner)
         cBoosted = boostContrast(cTransfer, doner)
-        images = [#warped,
+        images = [PCA,
                   aPCA,
-                  PCA,
                   #sTransfer,
-                  cTransfer,
-                  cBoosted]
+                  cBoosted,
+                  cTransfer
+                  ]
     else:
         images = [warped]
 
@@ -1184,7 +1244,7 @@ def processArgs(inputText):
     blur = [25, 25]
     cb = None
     trans = None
-    transFil = [21, 30, 28, 191, 173, 255] #151
+    transFil = [21, 30, 87, 191, 173, 255] #28
     harSet = None
     dHarSet = None
 
@@ -1280,7 +1340,7 @@ def resolveImage(input, clean, output, border, trim, edge, res, mask, manual, fi
     if trans:
         if os.path.isfile(trans):
             print("processing " + trans)
-            doner = processImage(trans, None, border, False, [35,35,35,35], res, None, False, transFil, cusFilter, False, dHarSet, [3, 3], None, None, debug, False)[0]
+            doner = processImage(trans, None, border, False, [45,45,45,45], res, None, False, transFil, cusFilter, False, dHarSet, [3, 3], None, None, debug, False)[0]
         else:
             print("doner file " + trans + "not found, skipping transfer.")
     print("processing " + input)
