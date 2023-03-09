@@ -58,7 +58,6 @@ _, simg, _2 = cv.split(np.float32(cv.cvtColor(image, cv.COLOR_BGR2HSV)))
 
 while True:
     cimg = np.copy(image)
-    print(thresh/10000)
     corners = cv.cornerHarris(simg, block*2+1, ksize*2+1, k/1000)
     cimg[corners > thresh/10000 * corners.max()] = [255, 0, 255]
     ret, dst = cv.threshold(corners, 0.01 * corners.max(), 255, 0)

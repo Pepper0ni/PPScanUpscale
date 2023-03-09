@@ -1,1 +1,3 @@
-python3 ./main.py -i $1 -o $2 -b 0.029296875,0.029296875,0.0408719346049,0.0408719346049 -r 734,1024 -e 34,34,34,34 -m ./cardmask.png -cb 2,2,2,2 -ct ./cache/ $3
+bash ./Scripts/subScripts/EXPostProcess.bash $1
+
+bash ./Scripts/subScripts/EXSingleCardProcessScript.bash $1

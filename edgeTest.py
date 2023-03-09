@@ -47,6 +47,12 @@ args = parser.parse_args()
 image = cv.imread(cv.samples.findFile(args.Input))
 size = (round(image.shape[1]/2), round(image.shape[0]/2))
 #image = cv.resize(image, size, cv.INTER_AREA)
+H, S, V = cv.split(cv.cvtColor(image, cv.COLOR_BGR2HSV))
+S = S.astype(float) * 4
+S = S - 40
+S[S > 255] = 255
+S[S < 0] = 0
+clean = cv.cvtColor(cv.merge([H, S.astype(np.uint8), V]), cv.COLOR_HSV2BGR)
 
 cv.namedWindow(window_detection_name, cv.WINDOW_NORMAL)
 cv.namedWindow("bilin", cv.WINDOW_NORMAL)
@@ -57,10 +63,10 @@ cv.createTrackbar("space", window_detection_name, space, 30, spaceTrackbar)
 cv.createTrackbar("blur", window_detection_name, blur, 30, blurTrackbar)
 
 while True:
-    biblur = cv.bilateralFilter(image, space, blur, space)
-    biblur = cv.bilateralFilter(biblur, space, blur, space)
-    biblur = cv.bilateralFilter(biblur, space, blur, space)
-    biblur = cv.bilateralFilter(biblur, space, blur, space)
+    biblur = cv.bilateralFilter(clean, space, blur, space)
+    # biblur = cv.bilateralFilter(biblur, space, blur, space)
+    # biblur = cv.bilateralFilter(biblur, space, blur, space)
+    # biblur = cv.bilateralFilter(biblur, space, blur, space)
     #hsvImage = cv.cvtColor(biblur, cv.COLOR_BGR2HSV_FULL)
     if sobel == 0:
         sobel = 1

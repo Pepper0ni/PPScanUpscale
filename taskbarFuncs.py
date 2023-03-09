@@ -1,6 +1,7 @@
 import cv2 as cv
 import numpy as np
 from decimal import Decimal
+import utilities
 
 TRACKBAR_WINDOW_NAME = "Manual point set"
 lowHue = 0
