@@ -30,6 +30,47 @@ ELEC_VAL_VAR = 1  # sets the variance in value for the adaptive border detection
 CORNER_FIX_STREGNTH = 5  # sets how large an area, and how strong a blur, to use for the corner fixing
 timesRun = 0
 BORDER_LIMIT = 26
+MIN_SAT = 80
+
+def matchLowSatValue(img, border, side):
+    if side == 0:
+        trimImg = utilities.trimImage(np.copy(img), 0, 20, 0, img.shape[1])
+        trimBor = utilities.trimImage(np.copy(border), 0, 20, 0, border.shape[1])
+    elif side == 1:
+        trimImg = utilities.trimImage(np.copy(img), img.shape[0] - 20, img.shape[0], 0, img.shape[1])
+        trimBor = utilities.trimImage(np.copy(border), border.shape[0] - 20, border.shape[0], 0, border.shape[1])
+    elif side == 2:
+        trimImg = utilities.trimImage(np.copy(img), 0, img.shape[0], 0, 20)
+        trimBor = utilities.trimImage(np.copy(border), 0, border.shape[0], 0, 20)
+    elif side == 3:
+        trimImg = utilities.trimImage(np.copy(img), 0, img.shape[0], img.shape[1] - 20, img.shape[1])
+        trimBor = utilities.trimImage(np.copy(border), 0, border.shape[0], border.shape[1] - 20, border.shape[1])
+    #
+    # cv.imshow("img", trimImg)
+    # cv.imshow("border", trimBor)
+    # cv.waitKey()
+
+    bH, bS, bV = cv.split(cv.cvtColor(trimBor, cv.COLOR_BGR2HSV))
+    bEx = np.extract(np.less(bS, MIN_SAT), bV)
+    borVal = np.percentile(bEx, 95)
+
+    iH, iS, iV = cv.split(cv.cvtColor(trimImg, cv.COLOR_BGR2HSV))
+    iEx = np.extract(np.less(iS, MIN_SAT), iV)
+    imgVal = np.percentile(iEx, 95)
+
+    bH, bS, bV = cv.split(cv.cvtColor(border, cv.COLOR_BGR2HSV))
+
+    reduce = int((borVal-imgVal)-5)
+
+    # cv.imshow("old", border)
+
+    if reduce > 0:
+        satMask = np.less(bS, MIN_SAT)
+        np.subtract(bV, reduce, bV, where=satMask)
+        np.putmask(bV, np.logical_and(np.greater(bV, 255 - reduce), satMask), 0) #counter undeflow
+        border = cv.cvtColor(cv.merge([bH, bS, bV]), cv.COLOR_HSV2BGR)
+
+    return border
 
 
 def finishDonerRow(img, border, imgOffset, row, start, end, isUp, valThresh, buffer, limit):
@@ -126,14 +167,15 @@ def mergeBorderH(img, borImg, valThresh, size, offset, top):
         cv.cvtColor(cv.cvtColor(borImg, cv.COLOR_LBGR2LAB), cv.COLOR_LAB2BGR) / 255) * 255).astype(np.uint8)
 
     if top:
+        borImg = matchLowSatValue(trimImg, borImg, 0)
         trimBor = utilities.trimImage(borImg, 0, size, 0, borImg.shape[1])
     else:
+        borImg = matchLowSatValue(trimImg, borImg, 1)
         trimBor = utilities.trimImage(borImg, borImg.shape[0] - size, borImg.shape[0], 0, borImg.shape[1])
 
     if valThresh:
         bH, bS, bV = cv.split(cv.cvtColor(trimBor, cv.COLOR_BGR2HSV))
         np.putmask(trimImg, logialOrValSat(trimImg.shape, nV, bV, nS, valThresh, 50), trimBor)
-
 
     if top:
         pasteImage(img, trimImg, 0, 0)
@@ -233,18 +275,17 @@ def mergeBorderV(img, borImg, valThresh, size, offset, left):
     borImg = cv.normalize(PCAColorTransfer(LBGRb, LBGRd), None, 0, 255, cv.NORM_MINMAX, cv.CV_8U)
     borImg = (utilities.clipToOne(
         cv.cvtColor(cv.cvtColor(borImg, cv.COLOR_LBGR2LAB), cv.COLOR_LAB2BGR) / 255) * 255).astype(np.uint8)
-    # cv.imshow("top", borImg)
-    # cv.waitKey()
+
     if left:
+        borImg = matchLowSatValue(trimImg, borImg, 2)
         trimBor = utilities.trimImage(borImg, 0, borImg.shape[0], 0, size)
     else:
+        borImg = matchLowSatValue(trimImg, borImg, 3)
         trimBor = utilities.trimImage(borImg, 0, borImg.shape[0], borImg.shape[1] - size, borImg.shape[1])
 
-    print(trimBor.shape)
     if valThresh:
         bH, bS, bV = cv.split(cv.cvtColor(trimBor, cv.COLOR_BGR2HSV))
-        np.putmask(trimImg, logialOrValSat(trimImg.shape, nV, bV, nS, valThresh, 50), trimBor)
-
+        np.putmask(trimImg, logialOrValSat(trimImg.shape, nV, bV, nS, valThresh, MIN_SAT), trimBor)
 
     if left:
         pasteImage(img, trimImg, 0, 0)
@@ -371,10 +412,6 @@ def pasteBorders(img, path, valThresh=175, size=15):
 
     lBor = getRandomImage(path, "left")
     newImg = mergeBorderV(newImg, lBor, valThresh, size, 0, True)
-
-    print("beep")
-    print(size)
-    print("beep")
 
     rBor = getRandomImage(path, "right")
     newImg = mergeBorderV(newImg, rBor, valThresh, size, newImg.shape[1] - rBor.shape[1], False)
