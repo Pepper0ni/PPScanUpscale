@@ -30,7 +30,32 @@ ELEC_VAL_VAR = 1  # sets the variance in value for the adaptive border detection
 CORNER_FIX_STREGNTH = 5  # sets how large an area, and how strong a blur, to use for the corner fixing
 timesRun = 0
 BORDER_LIMIT = 26
-MIN_SAT = 80
+MIN_SAT = 50
+
+def getBorderHSVPercentile(hsvImg, exclude, size, percents, satCap=None):
+    borderBase = cv.vconcat(
+        [utilities.trimImage(hsvImg, exclude, size, exclude, hsvImg.shape[1] - exclude),
+         utilities.trimImage(hsvImg, hsvImg.shape[0] - size, hsvImg.shape[0] - exclude, exclude, hsvImg.shape[1] - exclude)])
+
+    borderBaseV = cv.hconcat(
+        [utilities.trimImage(hsvImg, exclude, hsvImg.shape[0] - exclude, exclude, size),
+         utilities.trimImage(hsvImg, exclude, hsvImg.shape[0] - exclude, hsvImg.shape[1] - size, hsvImg.shape[1] - exclude)])
+    borderBaseV = cv.transpose(borderBaseV)  # make an image from the assumed borders of the image
+
+    borderBase = cv.hconcat([borderBase, borderBaseV])
+
+    if satCap:
+        borderBase = borderBase[borderBase[:, :, 1] < satCap]
+        #borderBase = np.extract(np.less(borderBase[:, :, 1], satCap), borderBase)
+
+    results = []
+    #print(borderBase)
+    #print(np.reshape(borderBase, (-1, 3)))
+    for perc in percents:
+        results.append(np.percentile(np.reshape(borderBase, (-1, 3)), perc, (0)))
+    #print(results)
+    return results
+
 
 def matchLowSatValue(img, border, side):
     if side == 0:
@@ -52,15 +77,21 @@ def matchLowSatValue(img, border, side):
 
     bH, bS, bV = cv.split(cv.cvtColor(trimBor, cv.COLOR_BGR2HSV))
     bEx = np.extract(np.less(bS, MIN_SAT), bV)
-    borVal = np.percentile(bEx, 95)
+    borVal = np.percentile(bEx, 90)
+
+    # cv.imshow("top", border)
+    # cv.waitKey()
 
     iH, iS, iV = cv.split(cv.cvtColor(trimImg, cv.COLOR_BGR2HSV))
     iEx = np.extract(np.less(iS, MIN_SAT), iV)
-    imgVal = np.percentile(iEx, 95)
+    imgVal = np.percentile(iEx, 90)
 
     bH, bS, bV = cv.split(cv.cvtColor(border, cv.COLOR_BGR2HSV))
 
-    reduce = int((borVal-imgVal)-5)
+    reduce = int(borVal-imgVal)
+    #if reduce > 0:
+        #reduce = 0
+        #reduce = int((math.log(reduce)*15)-25)
 
     # cv.imshow("old", border)
 
@@ -150,13 +181,24 @@ def finishDonerCol(img, border, imgOffset, col, start, end, isLeft, valThresh, b
             finishDonerCol(img, border, imgOffset, col + 1, startPoint, endPoint, isLeft, valThresh, buffer, limit)
 
 
-def mergeBorderH(img, borImg, valThresh, size, offset, top):
-    oldImg = img.copy()
-    iH, iS, iV = cv.split(cv.cvtColor(img, cv.COLOR_BGR2HSV))
+def trimToBorderH(img, size, offset, top):
     if top:
-        trimImg = utilities.trimImage(np.copy(img), offset, offset + size, 0, img.shape[1])
+        return utilities.trimImage(np.copy(img), offset, offset + size, 0, img.shape[1])
     else:
-        trimImg = utilities.trimImage(np.copy(img), img.shape[0] - size, img.shape[0], 0, img.shape[1])
+        return utilities.trimImage(np.copy(img), img.shape[0] - size, img.shape[0], 0, img.shape[1])
+
+def trimToBorderV(img, size, offset, left):
+    if left:
+        return utilities.trimImage(np.copy(img), 0, img.shape[0], offset, offset + size)
+    else:
+        return utilities.trimImage(np.copy(img), 0, img.shape[0], img.shape[1] - size, img.shape[1])
+
+
+def mergeBorderH(img, borImg, valThresh, size, offset, top):
+    #print(valThresh)
+    oldImg = img.copy()
+    trimImg = trimToBorderH(img, size, offset, top)
+    oldTrimImg = trimToBorderH(img, borImg.shape[0], offset, top)
 
     nH, nS, nV = cv.split(cv.cvtColor(trimImg, cv.COLOR_BGR2HSV))
 
@@ -175,7 +217,7 @@ def mergeBorderH(img, borImg, valThresh, size, offset, top):
 
     if valThresh:
         bH, bS, bV = cv.split(cv.cvtColor(trimBor, cv.COLOR_BGR2HSV))
-        np.putmask(trimImg, logialOrValSat(trimImg.shape, nV, bV, nS, valThresh, 50), trimBor)
+        np.putmask(trimImg, logialOrValSat(trimImg.shape, nV, bV, nS, valThresh, MIN_SAT), trimBor)
 
     if top:
         pasteImage(img, trimImg, 0, 0)
@@ -183,16 +225,17 @@ def mergeBorderH(img, borImg, valThresh, size, offset, top):
         pasteImage(img, trimImg, 0, img.shape[0] - size)
 
     if valThresh:
+        iH, iS, iV = cv.split(cv.cvtColor(oldTrimImg, cv.COLOR_BGR2HSV))
         col = 0
         bH, bS, bV = cv.split(cv.cvtColor(borImg, cv.COLOR_BGR2HSV))
         if top:
-            tarRowb = size + 1
-            tarRowi = size + 1
+            tarRowb = size
+            tarRowi = tarRowb + offset
             nextRowi = tarRowi + 1
             nextRowb = tarRowb + 1
         else:
             tarRowb = borImg.shape[0] - size
-            tarRowi = img.shape[0] - size - 1
+            tarRowi = tarRowb + offset
             nextRowi = tarRowi - 1
             nextRowb = tarRowb - 1
 
@@ -204,70 +247,67 @@ def mergeBorderH(img, borImg, valThresh, size, offset, top):
                     col += 1
                     #print("writing " + str(img[tarRowi, col]) + " from" + str([tarRowb, col]) + "to" + str([tarRowi, col]))
                     img[tarRowi, col] = borImg[tarRowb, col]
-                #print(start)
-                #print(col)
                 finishDonerRow(img, borImg, offset, nextRowb, start, col, not top, valThresh, size, BORDER_LIMIT)
                 # repeat for next row up
             col += 1
-
-        # cv.imshow("top", img)
-        # cv.waitKey()
 
         col = 0
         climbList = []
         while col < img.shape[1]:  #finish circles of base border
             loCol = max(0, col - 1)
-            hiCol = min(img.shape[1] - 1, col + 1)
-            if iV[tarRowi, col] > valThresh and iV[nextRowi, loCol] > valThresh and iV[nextRowi, hiCol] > valThresh:
+            hiCol = min(oldTrimImg.shape[1] - 1, col + 1)
+            isBright = logialOrValSat([oldTrimImg.shape[0], oldTrimImg.shape[1], 1], iV, iV, iS, valThresh, MIN_SAT)
+            if isBright[tarRowb, col] and isBright[nextRowb, loCol] and isBright[nextRowb, hiCol]:
+                # print([oldImg[tarRowi, col], img[nextRowi, loCol], img[nextRowi, hiCol]])
                 result = averagePixels(oldImg[tarRowi, col], img[nextRowi, loCol], img[nextRowi, hiCol])
+                # print(result)
                 img[tarRowi, col] = result
-                #print("writing " + str(result) + " to " + str([tarRowi, col]))
+                # print("writing " + str(result) + " to " + str([tarRowi, col]))
                 climbList.append(col)
             col += 1
-
         X = 0
         newClimbList = []
-        curRow = tarRowi
         while True:
-            lastRow = curRow
+            lastRowi = tarRowi
+            lastRowb = tarRowb
             #print(climbList)
             #print(lastRow)
             if top:
-                curRow -= 1
+                tarRowi -= 1
+                tarRowb -= 1
             else:
-                curRow += 1
-            if not climbList or curRow < 0 or curRow >= img.shape[0]:
+                tarRowi += 1
+                tarRowb += 1
+            # print(tarRowb)
+            # print(tarRowi)
+            # print(oldTrimImg.shape[0])
+            if not climbList or tarRowb < 0 or tarRowb >= oldTrimImg.shape[0]:
                 break
+            curTrimImg = trimToBorderH(img, borImg.shape[0], offset, top)
+            cH, cS, cV = cv.split(cv.cvtColor(curTrimImg, cv.COLOR_BGR2HSV))
+            curIsBright = logialOrValSat([curTrimImg.shape[0], curTrimImg.shape[1], 1], cV, cV, cS, valThresh, 50)
             for col in climbList:
                 hiCol = min(img.shape[1] - 1, col + X)
                 loCol = max(0, col - X)
-                # print([curRow, col])
-                # print([lastRow, loCol])
-                # print([lastRow, hiCol])
-                if iV[curRow, col] > valThresh and any(img[lastRow, loCol] > valThresh) and any(img[lastRow, hiCol] > valThresh):
-                    result = averagePixels(oldImg[curRow, col], img[lastRow, loCol], img[lastRow, hiCol])
-                    img[curRow, col] = result
-                    #print("writing " + str(result) + " to " + str([curRow, col]))
+                if isBright[tarRowb, col] and curIsBright[lastRowb, loCol] and curIsBright[lastRowb, hiCol]: #iV[curRow, col] > valThresh and any(img[lastRow, loCol] > valThresh) and any(img[lastRow, hiCol] > valThresh):
+                    # print([oldImg[tarRowi, col], img[lastRowi, loCol], img[lastRowi, hiCol]])
+                    result = averagePixels(oldImg[tarRowi, col], img[lastRowi, loCol], img[lastRowi, hiCol])
+                    img[tarRowi, col] = result
+                    # print(result)
+                    # print("writing " + str(result) + " to " + str([tarRowi, col]))
                     newClimbList.append(col)
             climbList = newClimbList
             newClimbList = []
             X += 1
 
-    # cv.imshow("top", img)
-    # cv.waitKey()
     return img
 
 def mergeBorderV(img, borImg, valThresh, size, offset, left):
-    print(offset)
     oldImg = img.copy()
-    iH, iS, iV = cv.split(cv.cvtColor(img, cv.COLOR_BGR2HSV))
-    if left:
-        trimImg = utilities.trimImage(np.copy(img), 0, img.shape[0], offset, offset + size)
-    else:
-        trimImg = utilities.trimImage(np.copy(img), 0, img.shape[0], img.shape[1] - size, img.shape[1])
 
-    # cv.imshow("top", trimImg)
-    # cv.waitKey()
+    trimImg = trimToBorderV(img, size, offset, left)
+    oldTrimImg = trimToBorderV(img, borImg.shape[1], offset, left)
+
     nH, nS, nV = cv.split(cv.cvtColor(trimImg, cv.COLOR_BGR2HSV))
 
     LBGRd = cv.cvtColor(cv.cvtColor(trimImg, cv.COLOR_BGR2LAB), cv.COLOR_LAB2LBGR)
@@ -292,25 +332,20 @@ def mergeBorderV(img, borImg, valThresh, size, offset, left):
     else:
         pasteImage(img, trimImg, img.shape[1] - size, 0)
 
-    # cv.imshow("top", trimImg)
-    # cv.waitKey()
-
     if valThresh:
+        iH, iS, iV = cv.split(cv.cvtColor(oldTrimImg, cv.COLOR_BGR2HSV))
         row = 0
         bH, bS, bV = cv.split(cv.cvtColor(borImg, cv.COLOR_BGR2HSV))
         if left:
-            tarColb = size + 1
-            tarColi = size + 1
+            tarColb = size
+            tarColi = tarColb + offset
             nextColi = tarColi + 1
             nextColb = tarColb + 1
         else:
             tarColb = borImg.shape[1] - size
-            tarColi = img.shape[1] - size - 1
+            tarColi = tarColb + offset
             nextColi = tarColi - 1
             nextColb = tarColb - 1
-
-        # print(tarColb)
-        # print(tarColi)
 
         while row < img.shape[0]:  # top finish speckles on doner border
             if bV[row, tarColb] > valThresh:  # if last on border is bright
@@ -318,54 +353,45 @@ def mergeBorderV(img, borImg, valThresh, size, offset, left):
                 start = row
                 while row + 1 < img.shape[0] and bV[row + 1, tarColb] > valThresh:
                     row += 1
-                    #print("writing " + str(img[row, tarColi]) + " from" + str([row, tarColb]) + "to" + str([row, tarColi]))
                     img[row, tarColi] = borImg[row, tarColb]
-                # print(start)
-                # print(row)
-                # print(nextColb)
                 finishDonerCol(img, borImg, offset, nextColb, start, row, not left,
                                valThresh, size, BORDER_LIMIT)  # repeat for next row up
             row += 1
-
-        # cv.imshow("top", img)
-        # cv.waitKey()
 
         row = 0
         climbList = []
         while row < img.shape[0]:  # top finish circles of base border
             loRow = max(0, row - 1)
-            hiRow = min(img.shape[0] - 1, row + 1)
-            if iV[row, tarColi] > valThresh and iV[loRow, nextColi] > valThresh and iV[hiRow, nextColi] > valThresh:
+            hiRow = min(oldTrimImg.shape[0] - 1, row + 1)
+            isBright = logialOrValSat([oldTrimImg.shape[0], oldTrimImg.shape[1], 1], iV, iV, iS, valThresh, MIN_SAT)
+            if isBright[row, tarColb] and isBright[loRow, nextColb] and isBright[hiRow, nextColb]:
                 result = averagePixels(oldImg[row, tarColi], img[loRow, nextColi], img[hiRow, nextColi])
                 img[row, tarColi] = result
-                #print("writing " + str(result) + " to " + str([row, tarColi]))
                 climbList.append(row)
             row += 1
-
         X = 0
         newClimbList = []
-        curCol = tarColi
         while True:
-            lastCol = curCol
-            #print(lastCol)
+            lastColi = tarColi
+            lastColb = tarColb
             if left:
-                curCol -= 1
+                tarColi -= 1
+                tarColb -= 1
             else:
-                curCol += 1
-            if not climbList or curCol < 0 or curCol >= img.shape[1]:
+                tarColi += 1
+                tarColb += 1
+            if not climbList or tarColb < 0 or tarColb >= oldTrimImg.shape[1]:
                 break
+            curTrimImg = trimToBorderV(img, borImg.shape[1], offset, left)
+            cH, cS, cV = cv.split(cv.cvtColor(curTrimImg, cv.COLOR_BGR2HSV))
+            curIsBright = logialOrValSat([curTrimImg.shape[0], curTrimImg.shape[1], 1], cV, cV, cS, valThresh, 50)
             for row in climbList:
-                hiRow = min(img.shape[1] - 1, row + X)
+                hiRow = min(img.shape[0] - 1, row + X)
                 loRow = max(0, row - X)
-                # print([curCol, row])
-                # print([lastCol, loRow])
-                # print([lastCol, hiCol])
-                if iV[row, curCol] > valThresh and any(img[loRow, lastCol] > valThresh) and any(img[hiRow, lastCol] > valThresh):
-                    result = averagePixels(oldImg[row, curCol], img[loRow, lastCol], img[hiRow, lastCol])
-                    img[row, curCol] = result
-                    #print("writing " + str(result) + " to " + str([row, curCol]))
+                if isBright[row, tarColb] and curIsBright[loRow, lastColb] and curIsBright[hiRow, lastColb]:
+                    result = averagePixels(oldImg[row, tarColi], img[loRow, lastColi], img[hiRow, lastColi])
+                    img[row, tarColi] = result
                     newClimbList.append(row)
-            #print(newClimbList)
             climbList = newClimbList
             newClimbList = []
             X += 1
@@ -385,8 +411,7 @@ def logialOrValSat(targetShape, nV, tV, nS, valThresh, satThresh):
         return np.broadcast_to(np.logical_or(
             np.logical_or(np.greater_equal(nV, valThresh),
                           np.greater_equal(tV, valThresh)),
-            np.greater_equal(nS, satThresh),
-        )[:, :, np.newaxis]
+            np.greater_equal(nS, satThresh))[:, :, np.newaxis]
                                , targetShape)
     else:
         return np.full(targetShape, True)
@@ -398,7 +423,6 @@ def getRandomImage(path, folder):
                             random.choice(
                                 [x for x in os.listdir(fullPath) if os.path.isfile(os.path.join(fullPath, x))]))
     return cv.imread(cv.samples.findFile(filePath))
-
 
 
 def pasteBorders(img, path, valThresh=175, size=15):
@@ -1180,32 +1204,34 @@ def getPointsFromLines(clean, edge, debug, show, manual, src):
 
 def filterImage(hsvClean, adaptive, filter, exCorrect, debug, show):
     if adaptive:  # an apative method that tried to take a chunk of the border and make a filter based on it.
-        borderBase = cv.vconcat(
-            [utilities.trimImage(hsvClean, MIN_ELEC_AVG_RANGE, MAX_ELEC_AVG_RANGE, MIN_ELEC_AVG_RANGE,
-                                 hsvClean.shape[1] - MIN_ELEC_AVG_RANGE),
-             utilities.trimImage(hsvClean, hsvClean.shape[0] - MAX_ELEC_AVG_RANGE,
-                                 hsvClean.shape[0] - MIN_ELEC_AVG_RANGE, MIN_ELEC_AVG_RANGE,
-                                 hsvClean.shape[1] - MIN_ELEC_AVG_RANGE)])
-
-        borderBaseV = cv.hconcat(
-            [utilities.trimImage(hsvClean, MIN_ELEC_AVG_RANGE, hsvClean.shape[0] - MIN_ELEC_AVG_RANGE,
-                                 MIN_ELEC_AVG_RANGE, MAX_ELEC_AVG_RANGE),
-             utilities.trimImage(hsvClean, MIN_ELEC_AVG_RANGE, hsvClean.shape[0] - MIN_ELEC_AVG_RANGE,
-                                 hsvClean.shape[1] - MAX_ELEC_AVG_RANGE,
-                                 hsvClean.shape[1] - MIN_ELEC_AVG_RANGE)])
-        borderBaseV = cv.transpose(borderBaseV)  # make an image from the assumed borders of the image
-
-        borderBase = cv.hconcat([borderBase, borderBaseV])
-
-        highPerc = np.percentile(borderBase, 99,
-                                 (0, 1))  # get the range of the image's HSV values, ignoring 1% outliers)
-        lowPerc = np.percentile(borderBase, 1, (0, 1))
-        taskbarFuncs.lowHue = int(lowPerc[0] - ELEC_HUE_VAR)
-        taskbarFuncs.hiHue = int((highPerc[0] + ELEC_HUE_VAR))
-        taskbarFuncs.lowSat = int(lowPerc[1] - ELEC_SAT_VAR)
-        taskbarFuncs.hiSat = int(highPerc[1] + ELEC_SAT_VAR)
-        taskbarFuncs.lowVal = int(lowPerc[2] - ELEC_VAL_VAR)
-        taskbarFuncs.hiVal = int(highPerc[2] + ELEC_VAL_VAR)
+        # borderBase = cv.vconcat(
+        #     [utilities.trimImage(hsvClean, MIN_ELEC_AVG_RANGE, MAX_ELEC_AVG_RANGE, MIN_ELEC_AVG_RANGE,
+        #                          hsvClean.shape[1] - MIN_ELEC_AVG_RANGE),
+        #      utilities.trimImage(hsvClean, hsvClean.shape[0] - MAX_ELEC_AVG_RANGE,
+        #                          hsvClean.shape[0] - MIN_ELEC_AVG_RANGE, MIN_ELEC_AVG_RANGE,
+        #                          hsvClean.shape[1] - MIN_ELEC_AVG_RANGE)])
+        # 
+        # borderBaseV = cv.hconcat(
+        #     [utilities.trimImage(hsvClean, MIN_ELEC_AVG_RANGE, hsvClean.shape[0] - MIN_ELEC_AVG_RANGE,
+        #                          MIN_ELEC_AVG_RANGE, MAX_ELEC_AVG_RANGE),
+        #      utilities.trimImage(hsvClean, MIN_ELEC_AVG_RANGE, hsvClean.shape[0] - MIN_ELEC_AVG_RANGE,
+        #                          hsvClean.shape[1] - MAX_ELEC_AVG_RANGE,
+        #                          hsvClean.shape[1] - MIN_ELEC_AVG_RANGE)])
+        # borderBaseV = cv.transpose(borderBaseV)  # make an image from the assumed borders of the image
+        # 
+        # borderBase = cv.hconcat([borderBase, borderBaseV])
+        # 
+        # highPerc = np.percentile(borderBase, 99,
+        #                          (0, 1))  # get the range of the image's HSV values, ignoring 1% outliers)
+        # lowPerc = np.percentile(borderBase, 1, (0, 1))
+        hsvPercs = getBorderHSVPercentile(hsvClean, MIN_ELEC_AVG_RANGE, MAX_ELEC_AVG_RANGE, [99,1])
+        
+        taskbarFuncs.lowHue = int(hsvPercs[1][0] - ELEC_HUE_VAR)
+        taskbarFuncs.hiHue = int((hsvPercs[0][0] + ELEC_HUE_VAR))
+        taskbarFuncs.lowSat = int(hsvPercs[1][1] - ELEC_SAT_VAR)
+        taskbarFuncs.hiSat = int(hsvPercs[0][1] + ELEC_SAT_VAR)
+        taskbarFuncs.lowVal = int(hsvPercs[1][2] - ELEC_VAL_VAR)
+        taskbarFuncs.hiVal = int(hsvPercs[0][2] + ELEC_VAL_VAR)
         clean = cv.inRange(hsvClean, (taskbarFuncs.lowHue, taskbarFuncs.lowSat, taskbarFuncs.lowVal),
                            (taskbarFuncs.hiHue, taskbarFuncs.hiSat,
                             taskbarFuncs.hiVal))  # apply the range filter to the values
@@ -1632,43 +1658,58 @@ def processImage(baseImg, cleanImg, border, trim, edge, res, mask, manual, filte
             warped = addBlurredExtendBorder(warped, max(0, adjustNeeded[0]), max(0, adjustNeeded[1]),
                                             max(0, adjustNeeded[2]),
                                             max(0, adjustNeeded[3]), blur)
-
+    # cv.imshow("aPCA", warped)
+    # cv.waitKey()
     if replace:
-        warped = pasteBorders(warped, replace, fixCuts)
+        BorderHSV95 = getBorderHSVPercentile(cv.cvtColor(warped, cv.COLOR_BGR2HSV), 0, int(max(1, min(min(border[0], border[1]), min(border[2], border[3])) - 2)), [95], 40)
+        warped = pasteBorders(warped, replace, max(fixCuts, int(BorderHSV95[0][2])))
 
     warped = smoothBorders(warped, round(border[0]), round(border[1]), round(border[2]), round(border[3]), blur, cb,
                            fixCuts)
 
     if doner is not None:
+        LABd = cv.cvtColor(doner, cv.COLOR_BGR2LAB)
+        LABw = cv.cvtColor(warped, cv.COLOR_BGR2LAB)
+        PCA = cv.normalize(PCAColorTransfer(LABw, LABd), None, 0, 255, cv.NORM_MINMAX, cv.CV_8U)
+        PCA = cv.cvtColor(PCA, cv.COLOR_LAB2BGR) / 255
+
         LBGRd = cv.cvtColor(cv.cvtColor(doner, cv.COLOR_BGR2LAB), cv.COLOR_LAB2LBGR)
         LBGRw = cv.cvtColor(cv.cvtColor(warped, cv.COLOR_BGR2LAB), cv.COLOR_LAB2LBGR)
-        PCA = cv.normalize(PCAColorTransfer(LBGRw, LBGRd), None, 0, 255, cv.NORM_MINMAX, cv.CV_8U)
-        PCA = cv.cvtColor(cv.cvtColor(PCA, cv.COLOR_LBGR2LAB), cv.COLOR_LAB2BGR) / 255
+        LBGRPCA = cv.normalize(PCAColorTransfer(LBGRw, LBGRd), None, 0, 255, cv.NORM_MINMAX, cv.CV_8U)
+        LBGRPCA = cv.cvtColor(cv.cvtColor(LBGRPCA, cv.COLOR_LBGR2LAB), cv.COLOR_LAB2BGR) / 255
+
         fDoner = doner / 255
         aPCA = PCAColorTransfer(warped / 255, fDoner)
 
-        # oldLuma = getLuma(PCA)[:, :, np.newaxis]
-        # sTransfer = setSaturation(PCA, getChroma(fDoner))
-        # sTransfer = addLightness(sTransfer, oldLuma - getLuma(sTransfer)[:, :, np.newaxis])
         cTransfer = addLightness(fDoner,
                                  utilities.getLuminosity(aPCA)[:, :, np.newaxis] - utilities.getLuminosity(fDoner)[:, :,
                                                                                    np.newaxis])
+        cTransfer = (utilities.clipToOne(cTransfer) * 255).astype(np.uint8)
         aTransfer = addLightness(fDoner,
                                  utilities.getLuminosity(PCA)[:, :, np.newaxis] - utilities.getLuminosity(fDoner)[:, :,
                                                                                   np.newaxis])
-        # sTransfer = boostContrast((utilities.clipToOne(sTransfer) * 255).astype(np.uint8), doner)
-        cTransfer = (utilities.clipToOne(cTransfer) * 255).astype(np.uint8)
         aTransfer = (utilities.clipToOne(aTransfer) * 255).astype(np.uint8)
+        bTransfer = addLightness(fDoner,
+                                 utilities.getLuminosity(LBGRPCA)[:, :, np.newaxis] - utilities.getLuminosity(fDoner)[:, :,
+                                                                                  np.newaxis])
+        bTransfer = (utilities.clipToOne(bTransfer) * 255).astype(np.uint8)
+
         PCA = (utilities.clipToOne(PCA) * 255).astype(np.uint8)
         aPCA = (utilities.clipToOne(aPCA) * 255).astype(np.uint8)
+        LBGRPCA = (utilities.clipToOne(LBGRPCA) * 255).astype(np.uint8)
+        # cv.imshow("PCA", PCA)
         aPCA = boostContrast(aPCA, doner)
         PCA = boostContrast(PCA, doner)
+        LBGRPCA = boostContrast(LBGRPCA, doner)
+
         cBoosted = boostContrast(cTransfer, doner)
         aTransfer = boostContrast(aTransfer, doner)
-        images = [PCA,
+        bTransfer = boostContrast(bTransfer, doner)
+        images = [LBGRPCA,
+                  PCA,
                   aPCA,
-                  # sTransfer,
                   cBoosted,
+                  bTransfer,
                   aTransfer,
                   cTransfer,
                   warped
